@@ -1,0 +1,27 @@
+services:
+  app:
+    build: .
+    ports:
+      - "${PORT:-8000}:8000"
+    environment:
+      BROLL_DATA_DIR: /app/data/jobs
+      BROLL_LOCAL_LIBRARY: /app/data/footage-library
+      BROLL_PROVIDER: ${BROLL_PROVIDER:-mock}
+      WIKIMEDIA_CONTACT: ${WIKIMEDIA_CONTACT:-}
+      PEXELS_API_KEY: ${PEXELS_API_KEY:-}
+      TTS_PROVIDER: ${TTS_PROVIDER:-mock}
+      ELEVENLABS_API_KEY: ${ELEVENLABS_API_KEY:-}
+      ELEVENLABS_VOICE_ID: ${ELEVENLABS_VOICE_ID:-}
+      ELEVENLABS_MODEL_ID: ${ELEVENLABS_MODEL_ID:-eleven_multilingual_v2}
+      MAX_FOOTAGE_BYTES: ${MAX_FOOTAGE_BYTES:-26214400}
+      MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-26214400}
+      JOB_WORKERS: ${JOB_WORKERS:-2}
+      PROVIDER_TIMEOUT_SECONDS: ${PROVIDER_TIMEOUT_SECONDS:-10}
+    volumes:
+      - ./data:/app/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/ready', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 20s

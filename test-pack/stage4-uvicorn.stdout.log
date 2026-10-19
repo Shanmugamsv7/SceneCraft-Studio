@@ -1,0 +1,10 @@
+INFO:     127.0.0.1:49342 - "GET /ready HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49345 - "POST /api/v1/broll/jobs HTTP/1.1" 202 Accepted
+INFO:     127.0.0.1:49346 - "GET /api/v1/jobs/6c7d6ac1-f0a1-4cc2-83d9-80b5044c2b92 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49350 - "GET /api/v1/jobs/6c7d6ac1-f0a1-4cc2-83d9-80b5044c2b92 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49353 - "GET /api/v1/jobs/6c7d6ac1-f0a1-4cc2-83d9-80b5044c2b92 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49354 - "GET /api/v1/jobs/6c7d6ac1-f0a1-4cc2-83d9-80b5044c2b92 HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49355 - "POST /api/v1/broll/jobs HTTP/1.1" 202 Accepted
+INFO:     127.0.0.1:49356 - "GET /api/v1/jobs/762f7c0f-2f97-495a-99d4-c79e5f75341b HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49357 - "GET /api/v1/jobs/762f7c0f-2f97-495a-99d4-c79e5f75341b HTTP/1.1" 200 OK
+INFO:     127.0.0.1:49358 - "GET /api/v1/jobs/762f7c0f-2f97-495a-99d4-c79e5f75341b HTTP/1.1" 200 OK

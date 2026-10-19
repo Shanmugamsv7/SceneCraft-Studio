@@ -1,0 +1,109 @@
+{
+  "started_at": "2026-10-18T05:54:53.848076+00:00",
+  "finished_at": "2026-10-18T05:54:53.848076+00:00",
+  "attempted": 10,
+  "succeeded": 0,
+  "failed": 10,
+  "jobs": [
+    {
+      "name": "concrete-harbor-landscape",
+      "aspect_ratio": "16:9",
+      "status": "failed",
+      "error": {
+        "code": "BATCH_REQUEST_FAILED",
+        "message": "'ApiClient' object has no attribute '_json'"
+      },
+      "elapsed_seconds": 0.0
+    },
+    {
+      "name": "abstract-resilience-portrait",
+      "aspect_ratio": "9:16",
+      "status": "failed",
+      "error": {
+        "code": "BATCH_REQUEST_FAILED",
+        "message": "'ApiClient' object has no attribute '_json'"
+      },
+      "elapsed_seconds": 0.0
+    },
+    {
+      "name": "statistics-square",
+      "aspect_ratio": "1:1",
+      "status": "failed",
+      "error": {
+        "code": "BATCH_REQUEST_FAILED",
+        "message": "'ApiClient' object has no attribute '_json'"
+      },
+      "elapsed_seconds": 0.0
+    },
+    {
+      "name": "ambiguous-bank-landscape",
+      "aspect_ratio": "16:9",
+      "status": "failed",
+      "error": {
+        "code": "BATCH_REQUEST_FAILED",
+        "message": "'ApiClient' object has no attribute '_json'"
+      },
+      "elapsed_seconds": 0.0
+    },
+    {
+      "name": "named-entities-portrait",
+      "aspect_ratio": "9:16",
+      "status": "failed",
+      "error": {
+        "code": "BATCH_REQUEST_FAILED",
+        "message": "'ApiClient' object has no attribute '_json'"
+      },
+      "elapsed_seconds": 0.0
+    },
+    {
+      "name": "sensitive-wildfire-square",
+      "aspect_ratio": "1:1",
+      "status": "failed",
+      "error": {
+        "code": "BATCH_REQUEST_FAILED",
+        "message": "'ApiClient' object has no attribute '_json'"
+      },
+      "elapsed_seconds": 0.0
+    },
+    {
+      "name": "very-short-script-landscape",
+      "aspect_ratio": "16:9",
+      "status": "failed",
+      "error": {
+        "code": "BATCH_REQUEST_FAILED",
+        "message": "'ApiClient' object has no attribute '_json'"
+      },
+      "elapsed_seconds": 0.0
+    },
+    {
+      "name": "longer-community-garden-portrait",
+      "aspect_ratio": "9:16",
+      "status": "failed",
+      "error": {
+        "code": "BATCH_REQUEST_FAILED",
+        "message": "'ApiClient' object has no attribute '_json'"
+      },
+      "elapsed_seconds": 0.0
+    },
+    {
+      "name": "abstract-time-square",
+      "aspect_ratio": "1:1",
+      "status": "failed",
+      "error": {
+        "code": "BATCH_REQUEST_FAILED",
+        "message": "'ApiClient' object has no attribute '_json'"
+      },
+      "elapsed_seconds": 0.0
+    },
+    {
+      "name": "concrete-accessibility-landscape",
+      "aspect_ratio": "16:9",
+      "status": "failed",
+      "error": {
+        "code": "BATCH_REQUEST_FAILED",
+        "message": "'ApiClient' object has no attribute '_json'"
+      },
+      "elapsed_seconds": 0.0
+    }
+  ]
+}

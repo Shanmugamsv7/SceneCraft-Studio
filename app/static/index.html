@@ -1,0 +1,120 @@
+﻿<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f3f5f1">
+  <title>SceneCraft Studio â€” Script-to-B-roll Video Engine</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/" aria-label="SceneCraft Studio home"><span class="brand-mark">S</span><span>SceneCraft <b>Studio</b></span></a>
+    <div class="top-meta"><span class="mode-dot"></span><span>Local workspace</span><span class="divider"></span><span id="job-short">No project open</span></div>
+  </header>
+
+  <main class="app-shell">
+    <aside class="left-rail" aria-label="Project setup">
+      <div class="rail-heading"><div><p class="eyebrow">STEP 1 Â· CREATE</p><h1>Start with your story</h1></div><span class="step-chip">01</span></div>
+      <p class="rail-intro">Add narration and choose a format. SceneCraft will prepare a storyboard for you to review before export.</p>
+
+      <form id="job-form">
+        <label for="script">Your narration script <span class="label-note">editable</span></label>
+        <textarea id="script" name="script" rows="8" placeholder="Paste your voice-over script hereâ€¦" aria-describedby="script-help"></textarea>
+        <p id="script-help" class="field-hint">Use a script or an audio file. Demo mode adds a labelled test tone, not spoken narration. <button id="example-script" class="text-button" type="button">Try a short example</button></p>
+
+        <label for="audio" class="field-label">Voice-over audio <span class="label-note">optional</span></label>
+        <label class="upload-box" for="audio"><span class="upload-icon" aria-hidden="true">â†‘</span><span><b>Choose an audio file</b><small>MP3, WAV, M4A Â· up to 25 MB</small></span><span class="upload-browse">Browse</span></label>
+        <input id="audio" name="audio" type="file" accept="audio/mpeg,audio/wav,audio/mp4,.mp3,.wav,.m4a" class="visually-hidden">
+        <p id="audio-name" class="audio-name" aria-live="polite">Audio is not transcribed.</p>
+
+        <fieldset class="ratio-fieldset"><legend>Frame format</legend>
+          <div class="ratio-options">
+            <label class="ratio-option"><input type="radio" name="aspect_ratio" value="16:9" checked><span class="ratio-icon landscape" aria-hidden="true"></span><span>Landscape</span><small>16:9</small></label>
+            <label class="ratio-option"><input type="radio" name="aspect_ratio" value="9:16"><span class="ratio-icon portrait" aria-hidden="true"></span><span>Portrait</span><small>9:16</small></label>
+            <label class="ratio-option"><input type="radio" name="aspect_ratio" value="1:1"><span class="ratio-icon square" aria-hidden="true"></span><span>Square</span><small>1:1</small></label>
+          </div>
+        </fieldset>
+        <button id="create-button" class="button primary full-width" type="submit"><span aria-hidden="true">âœ¦</span> Create video</button>
+      </form>
+      <div class="privacy-note"><span aria-hidden="true">â—‰</span><p>Files stay in this local workspace. Uploaded audio is retained privately with its job so you can rerender edits.</p></div>
+      <div class="provider-legend"><p class="eyebrow">VISUAL KEY</p><p><span class="legend-dot suggestion"></span> Automated suggestion <em>offline mock options</em></p><p><span class="legend-dot generated"></span> Generated mock graphic</p><p><span class="legend-dot source"></span> Provider-sourced footage</p></div>
+      <section class="local-import-panel" aria-labelledby="local-import-heading">
+        <h3 id="local-import-heading">Import local footage</h3>
+        <p>Use clips you have permission to use. The server will keep them in its local library and match descriptive filenames to scene keywords.</p>
+        <form id="local-footage-form">
+          <label for="local-video">Video clip</label>
+          <input id="local-video" name="video" type="file" accept="video/mp4,video/quicktime,video/webm,.mp4,.mov,.m4v,.webm,.ogv,.mkv" required>
+          <label for="local-license">License</label>
+          <input id="local-license" name="license" type="text" maxlength="300" placeholder="e.g. CC BY 4.0 or my own footage" required>
+          <label for="local-attribution">Attribution</label>
+          <input id="local-attribution" name="attribution" type="text" maxlength="500" placeholder="Creator or required credit" required>
+          <label for="local-source-url">Source URL <span class="label-note">optional</span></label>
+          <input id="local-source-url" name="source_url" type="url" placeholder="https://â€¦">
+          <label class="rights-confirm"><input name="rights_confirmed" type="checkbox" required> I have permission to use this clip and will follow its license.</label>
+          <button class="button secondary full-width" type="submit">Import to local library</button>
+        </form>
+        <p id="local-import-status" class="field-hint" aria-live="polite">Local rights declarations are supplied by you and are not independently verified.</p>
+      </section>
+    </aside>
+
+    <section class="workspace" aria-label="Video editing workspace">
+      <div class="workspace-toolbar">
+        <div><p class="eyebrow">EDITING WORKSPACE</p><h2 id="project-title">Your video draft</h2></div>
+        <div class="toolbar-actions"><span id="edit-state" class="save-state">No unsaved changes</span><button id="save-button" class="button secondary" type="button" disabled>Save scene edits</button></div>
+      </div>
+
+      <section class="status-strip" aria-live="polite">
+        <div class="status-indicator"><span id="status-dot" class="status-dot idle"></span><div><b id="job-state">Ready when you are</b><small id="status-message">Create a draft to begin reviewing scenes.</small></div></div>
+        <div class="progress-area"><span id="progress-label">0%</span><progress id="progress" value="0" max="100" aria-label="Render progress">0%</progress></div>
+        <button id="refresh-button" class="icon-button" type="button" aria-label="Refresh job status" title="Refresh job status">â†»</button>
+      </section>
+
+      <div class="editor-grid">
+        <div class="preview-column">
+          <section class="preview-card" aria-label="Source and rendered video preview">
+            <div class="panel-heading"><div><p class="eyebrow">STEP 3 · PREVIEW</p><h3 id="preview-title">Selected source preview</h3><p id="preview-description">Create a full draft preview from saved scene choices. Final export remains a separate step.</p><p id="preview-state" class="preview-state" aria-live="polite">No export yet</p></div><span id="preview-ratio" class="quiet-pill">16:9</span></div>
+            <button id="draft-preview-button" class="button secondary" type="button" disabled>Create draft preview</button>
+            <p id="draft-preview-status" class="field-hint" role="status" aria-live="polite">Save a visual choice for every scene to preview the complete draft.</p>
+            <div id="preview-empty" class="preview-empty"><span class="play-emblem" aria-hidden="true">▶</span><b id="preview-empty-title">Your preview will appear here</b><span id="preview-empty-message">Create a draft to preview its selected visuals.</span></div>
+            <div id="source-preview" class="main-source-preview" hidden aria-live="polite">
+              <img id="source-preview-image" alt="Selected source visual preview" hidden referrerpolicy="no-referrer">
+              <div id="source-preview-swatch" class="main-source-swatch" hidden aria-hidden="true"></div>
+              <div id="source-preview-note" class="main-source-note" hidden></div>
+              <div class="main-source-meta"><b id="source-preview-label">Selected source visual · not the rendered video</b><span id="source-preview-title"></span><small id="source-preview-credit"></small></div>
+            </div>
+            <video id="preview-video" controls playsinline preload="metadata" hidden aria-label="Rendered video preview"><track id="caption-track" kind="captions" srclang="en" label="SceneCraft captions" default></video>
+            <p id="preview-load-error" class="field-hint preview-load-error" role="status" hidden>The latest rendered MP4 could not be loaded. Check the export link or rerender the project.</p>
+            <div class="preview-caption"><span class="caption-badge">CC</span><span class="caption-preview-label">Caption sample:</span><span id="preview-caption-text">Captions will be available after your first render.</span></div>
+          </section>
+
+          <section id="storyboard" class="storyboard-section">
+            <div class="section-heading"><div><p class="eyebrow">STEP 2 Â· STORYBOARD</p><h3>Review every scene</h3><p id="scene-count">Your scene cards will appear after you create a video.</p></div><span class="human-badge"><span aria-hidden="true">âœ¦</span> You decide what stays</span></div>
+            <div id="scene-list" class="scene-list" aria-live="polite"><div class="empty-scenes"><span aria-hidden="true">â–¤</span><p>Your scenes will be organized here.</p><small>Review narration, captions, and visuals individually.</small></div></div>
+          </section>
+        </div>
+
+        <aside class="export-column" aria-label="Export settings">
+          <section class="export-card">
+            <p class="eyebrow">STEP 4 Â· EXPORT</p><h3>Export video</h3>
+            <p class="export-copy">Review and accept every visual suggestion, then render your saved edits.</p>
+            <div class="export-spec"><span>Frame format</span><b id="export-ratio">16:9 Landscape</b></div>
+            <div class="export-spec"><span>Video</span><b>H.264 Â· 30 fps</b></div>
+            <div class="export-spec"><span>Captions</span><b>Editable SRT</b></div>
+            <div class="export-spec"><span>Duration</span><b id="export-duration">Available after render</b></div>
+            <div class="export-spec"><span>Footage mode</span><b id="export-mode">Waiting for scene review</b></div>
+            <button id="render-button" class="button primary full-width" type="button" disabled>Render full video</button>
+            <p id="render-hint" class="field-hint">Accept or replace each suggested visual to enable rendering.</p>
+            <div class="export-links" id="results" aria-label="Download rendered files"><p class="empty-export">No files exported yet</p></div>
+          </section>
+          <section class="provenance-card"><div class="provenance-icon" aria-hidden="true">â—Ž</div><h4>Source &amp; provenance</h4><p>Each scene shows its visual source and provenance. Mock cards are labelled and never presented as stock footage.</p><p id="provider-credit" hidden></p><a href="#storyboard">Review scene sources <span aria-hidden="true">â†“</span></a></section>
+          <p class="engine-note">Loading server provider modeâ€¦</p>
+        </aside>
+      </div>
+      <div id="notice" class="notice" role="alert" hidden></div>
+    </section>
+  </main>
+  <script src="/static/preview-state.js" defer></script>
+  <script src="/static/app.js" defer></script>
+</body>
+</html>

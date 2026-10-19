@@ -1,0 +1,154 @@
+{
+  "duration_seconds": 7.6,
+  "frame_rate": 30,
+  "scenes": [
+    {
+      "scene_id": "scene-1",
+      "index": 1,
+      "narration_text": "Time can feel different when people are waiting.",
+      "caption_text": "Time can feel different when people are waiting.",
+      "start": 0.0,
+      "end": 3.2,
+      "start_frame": 0,
+      "end_frame": 96,
+      "clip": "mock-color-eb0d4ea1-6b5f-47fa-809c-8c8091b51dc4-1-option-1-g0",
+      "provider": "mock-local",
+      "source": "FFmpeg lavfi color generator",
+      "license": "Generated locally; no third-party media licence applies; not stock footage",
+      "license_verified": false,
+      "attribution": "Generated locally by the SceneCraft Studio mock provider",
+      "source_url": null,
+      "ai_generated": false,
+      "selection_reason": "Offline generated-color fallback option; scene text is not semantically matched",
+      "relevance_score": null,
+      "visual_decision": "suggested",
+      "visual_options": [
+        {
+          "id": "mock-color-eb0d4ea1-6b5f-47fa-809c-8c8091b51dc4-1-option-1-g0",
+          "color": "0x6e2e2e",
+          "provider": "mock-local",
+          "source": "FFmpeg lavfi color generator",
+          "source_url": null,
+          "license": "Generated locally; no third-party media licence applies; not stock footage",
+          "license_verified": false,
+          "attribution": "Generated locally by the SceneCraft Studio mock provider",
+          "ai_generated": false,
+          "selection_reason": "Offline generated-color fallback option; scene text is not semantically matched",
+          "relevance_score": null,
+          "warnings": [
+            "Mock generated visual; not genuine footage or stock media"
+          ]
+        },
+        {
+          "id": "mock-color-eb0d4ea1-6b5f-47fa-809c-8c8091b51dc4-1-option-2-g0",
+          "color": "0x5d6e2e",
+          "provider": "mock-local",
+          "source": "FFmpeg lavfi color generator",
+          "source_url": null,
+          "license": "Generated locally; no third-party media licence applies; not stock footage",
+          "license_verified": false,
+          "attribution": "Generated locally by the SceneCraft Studio mock provider",
+          "ai_generated": false,
+          "selection_reason": "Offline generated-color fallback option; scene text is not semantically matched",
+          "relevance_score": null,
+          "warnings": [
+            "Mock generated visual; not genuine footage or stock media"
+          ]
+        },
+        {
+          "id": "mock-color-eb0d4ea1-6b5f-47fa-809c-8c8091b51dc4-1-option-3-g0",
+          "color": "0x2e6e50",
+          "provider": "mock-local",
+          "source": "FFmpeg lavfi color generator",
+          "source_url": null,
+          "license": "Generated locally; no third-party media licence applies; not stock footage",
+          "license_verified": false,
+          "attribution": "Generated locally by the SceneCraft Studio mock provider",
+          "ai_generated": false,
+          "selection_reason": "Offline generated-color fallback option; scene text is not semantically matched",
+          "relevance_score": null,
+          "warnings": [
+            "Mock generated visual; not genuine footage or stock media"
+          ]
+        }
+      ],
+      "warnings": [
+        "Mock generated visual; not genuine footage or stock media"
+      ]
+    },
+    {
+      "scene_id": "scene-2",
+      "index": 2,
+      "narration_text": "A familiar routine may make a difficult afternoon feel more manageable.",
+      "caption_text": "A familiar routine may make a difficult afternoon feel more manageable.",
+      "start": 3.2,
+      "end": 7.6,
+      "start_frame": 96,
+      "end_frame": 228,
+      "clip": "mock-color-eb0d4ea1-6b5f-47fa-809c-8c8091b51dc4-2-option-1-g0",
+      "provider": "mock-local",
+      "source": "FFmpeg lavfi color generator",
+      "license": "Generated locally; no third-party media licence applies; not stock footage",
+      "license_verified": false,
+      "attribution": "Generated locally by the SceneCraft Studio mock provider",
+      "source_url": null,
+      "ai_generated": false,
+      "selection_reason": "Offline generated-color fallback option; scene text is not semantically matched",
+      "relevance_score": null,
+      "visual_decision": "suggested",
+      "visual_options": [
+        {
+          "id": "mock-color-eb0d4ea1-6b5f-47fa-809c-8c8091b51dc4-2-option-1-g0",
+          "color": "0x2e416e",
+          "provider": "mock-local",
+          "source": "FFmpeg lavfi color generator",
+          "source_url": null,
+          "license": "Generated locally; no third-party media licence applies; not stock footage",
+          "license_verified": false,
+          "attribution": "Generated locally by the SceneCraft Studio mock provider",
+          "ai_generated": false,
+          "selection_reason": "Offline generated-color fallback option; scene text is not semantically matched",
+          "relevance_score": null,
+          "warnings": [
+            "Mock generated visual; not genuine footage or stock media"
+          ]
+        },
+        {
+          "id": "mock-color-eb0d4ea1-6b5f-47fa-809c-8c8091b51dc4-2-option-2-g0",
+          "color": "0x6c2e6e",
+          "provider": "mock-local",
+          "source": "FFmpeg lavfi color generator",
+          "source_url": null,
+          "license": "Generated locally; no third-party media licence applies; not stock footage",
+          "license_verified": false,
+          "attribution": "Generated locally by the SceneCraft Studio mock provider",
+          "ai_generated": false,
+          "selection_reason": "Offline generated-color fallback option; scene text is not semantically matched",
+          "relevance_score": null,
+          "warnings": [
+            "Mock generated visual; not genuine footage or stock media"
+          ]
+        },
+        {
+          "id": "mock-color-eb0d4ea1-6b5f-47fa-809c-8c8091b51dc4-2-option-3-g0",
+          "color": "0x6e3d2e",
+          "provider": "mock-local",
+          "source": "FFmpeg lavfi color generator",
+          "source_url": null,
+          "license": "Generated locally; no third-party media licence applies; not stock footage",
+          "license_verified": false,
+          "attribution": "Generated locally by the SceneCraft Studio mock provider",
+          "ai_generated": false,
+          "selection_reason": "Offline generated-color fallback option; scene text is not semantically matched",
+          "relevance_score": null,
+          "warnings": [
+            "Mock generated visual; not genuine footage or stock media"
+          ]
+        }
+      ],
+      "warnings": [
+        "Mock generated visual; not genuine footage or stock media"
+      ]
+    }
+  ]
+}

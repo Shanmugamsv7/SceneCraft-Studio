@@ -1,0 +1,30 @@
+app-1  | {"timestamp": "2026-10-18T05:18:05.399698+00:00", "level": "INFO", "job_id": "5706ea46-1f76-4112-bcea-04fd1d0d2b10", "correlation_id": "c0f5ca5e-77d1-475b-9aa5-8593d382cf99", "message": "request complete method=GET route=/api/v1/jobs/{job_id} status=200"}
+app-1  | INFO:     172.18.0.1:49568 - "GET /api/v1/jobs/5706ea46-1f76-4112-bcea-04fd1d0d2b10 HTTP/1.1" 200 OK
+app-1  | {"timestamp": "2026-10-18T05:18:05.929543+00:00", "level": "INFO", "job_id": "5706ea46-1f76-4112-bcea-04fd1d0d2b10", "correlation_id": "cc885e36-dc5f-4cac-841a-1f6c9b54d9f8", "message": "request complete method=GET route=/api/v1/jobs/{job_id} status=200"}
+app-1  | INFO:     172.18.0.1:55892 - "GET /api/v1/jobs/5706ea46-1f76-4112-bcea-04fd1d0d2b10 HTTP/1.1" 200 OK
+app-1  | {"timestamp": "2026-10-18T05:18:06.439048+00:00", "level": "INFO", "job_id": "5706ea46-1f76-4112-bcea-04fd1d0d2b10", "correlation_id": "6214ca5b-c6ad-4021-a888-f07a1021802e", "message": "request complete method=GET route=/api/v1/jobs/{job_id} status=200"}
+app-1  | INFO:     172.18.0.1:55900 - "GET /api/v1/jobs/5706ea46-1f76-4112-bcea-04fd1d0d2b10 HTTP/1.1" 200 OK
+app-1  | {"timestamp": "2026-10-18T05:18:06.947995+00:00", "level": "INFO", "job_id": "5706ea46-1f76-4112-bcea-04fd1d0d2b10", "correlation_id": "ba5da660-cbcf-42a8-8ace-425622b371e3", "message": "request complete method=GET route=/api/v1/jobs/{job_id} status=200"}
+app-1  | INFO:     172.18.0.1:55902 - "GET /api/v1/jobs/5706ea46-1f76-4112-bcea-04fd1d0d2b10 HTTP/1.1" 200 OK
+app-1  | {"timestamp": "2026-10-18T05:18:07.018046+00:00", "level": "INFO", "job_id": "5706ea46-1f76-4112-bcea-04fd1d0d2b10", "correlation_id": "8330e1f1-9f34-40c1-afb0-8f69ec41946c", "message": "job succeeded"}
+app-1  | INFO:     172.18.0.1:55914 - "GET /api/v1/jobs/5706ea46-1f76-4112-bcea-04fd1d0d2b10 HTTP/1.1" 200 OK
+app-1  | {"timestamp": "2026-10-18T05:18:07.466736+00:00", "level": "INFO", "job_id": "5706ea46-1f76-4112-bcea-04fd1d0d2b10", "correlation_id": "b91f5ad9-9d19-4133-9e4c-d9d3f5205c1b", "message": "request complete method=GET route=/api/v1/jobs/{job_id} status=200"}
+app-1  | {"timestamp": "2026-10-18T05:18:07.486313+00:00", "level": "INFO", "job_id": "310fc45b-9ff6-44b7-95fb-c88391e1e0f3", "correlation_id": "a0c284ba-545f-4e4e-add1-0d5c29e6069b", "message": "job accepted"}
+app-1  | {"timestamp": "2026-10-18T05:18:07.487006+00:00", "level": "INFO", "job_id": "310fc45b-9ff6-44b7-95fb-c88391e1e0f3", "correlation_id": "a0c284ba-545f-4e4e-add1-0d5c29e6069b", "message": "job started"}
+app-1  | {"timestamp": "2026-10-18T05:18:07.487149+00:00", "level": "INFO", "job_id": "-", "correlation_id": "a0c284ba-545f-4e4e-add1-0d5c29e6069b", "message": "request complete method=POST route=/api/v1/broll/jobs status=202"}
+app-1  | INFO:     172.18.0.1:55930 - "POST /api/v1/broll/jobs HTTP/1.1" 202 Accepted
+app-1  | INFO:     172.18.0.1:55946 - "GET /api/v1/jobs/310fc45b-9ff6-44b7-95fb-c88391e1e0f3 HTTP/1.1" 200 OK
+app-1  | {"timestamp": "2026-10-18T05:18:07.515143+00:00", "level": "INFO", "job_id": "310fc45b-9ff6-44b7-95fb-c88391e1e0f3", "correlation_id": "3fd24e88-df4c-4b2a-a3de-e7d121a17183", "message": "request complete method=GET route=/api/v1/jobs/{job_id} status=200"}
+app-1  | {"timestamp": "2026-10-18T05:18:07.712761+00:00", "level": "INFO", "job_id": "-", "correlation_id": "452356ab-1038-402e-91c7-2cadd1951b6a", "message": "request complete method=GET route=/ready status=200"}
+app-1  | INFO:     127.0.0.1:39542 - "GET /ready HTTP/1.1" 200 OK
+app-1  | {"timestamp": "2026-10-18T05:18:08.023795+00:00", "level": "INFO", "job_id": "310fc45b-9ff6-44b7-95fb-c88391e1e0f3", "correlation_id": "c3c44d21-53da-41f6-b47d-ecc1aa8680c5", "message": "request complete method=GET route=/api/v1/jobs/{job_id} status=200"}
+app-1  | INFO:     172.18.0.1:55954 - "GET /api/v1/jobs/310fc45b-9ff6-44b7-95fb-c88391e1e0f3 HTTP/1.1" 200 OK
+app-1  | {"timestamp": "2026-10-18T05:18:08.545636+00:00", "level": "INFO", "job_id": "310fc45b-9ff6-44b7-95fb-c88391e1e0f3", "correlation_id": "63e8ab4c-8a38-4dd3-a273-82252c049e0f", "message": "request complete method=GET route=/api/v1/jobs/{job_id} status=200"}
+app-1  | INFO:     172.18.0.1:55956 - "GET /api/v1/jobs/310fc45b-9ff6-44b7-95fb-c88391e1e0f3 HTTP/1.1" 200 OK
+app-1  | {"timestamp": "2026-10-18T05:18:09.063676+00:00", "level": "INFO", "job_id": "310fc45b-9ff6-44b7-95fb-c88391e1e0f3", "correlation_id": "1596d791-d687-4bac-8616-c5c8e32afcc6", "message": "request complete method=GET route=/api/v1/jobs/{job_id} status=200"}
+app-1  | INFO:     172.18.0.1:55972 - "GET /api/v1/jobs/310fc45b-9ff6-44b7-95fb-c88391e1e0f3 HTTP/1.1" 200 OK
+app-1  | {"timestamp": "2026-10-18T05:18:09.298652+00:00", "level": "INFO", "job_id": "310fc45b-9ff6-44b7-95fb-c88391e1e0f3", "correlation_id": "a0c284ba-545f-4e4e-add1-0d5c29e6069b", "message": "job succeeded"}
+app-1  | {"timestamp": "2026-10-18T05:18:09.579795+00:00", "level": "INFO", "job_id": "310fc45b-9ff6-44b7-95fb-c88391e1e0f3", "correlation_id": "87d691c1-9d3d-4406-8fe5-9a06ae677e55", "message": "request complete method=GET route=/api/v1/jobs/{job_id} status=200"}
+app-1  | INFO:     172.18.0.1:55974 - "GET /api/v1/jobs/310fc45b-9ff6-44b7-95fb-c88391e1e0f3 HTTP/1.1" 200 OK
+app-1  | {"timestamp": "2026-10-18T05:18:18.067129+00:00", "level": "INFO", "job_id": "-", "correlation_id": "88edf18f-59d2-45b5-85b2-76317aa70459", "message": "request complete method=GET route=/ready status=200"}
+app-1  | INFO:     127.0.0.1:36246 - "GET /ready HTTP/1.1" 200 OK

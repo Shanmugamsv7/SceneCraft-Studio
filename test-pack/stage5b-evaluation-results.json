@@ -1,0 +1,319 @@
+{
+  "started_at": "2026-10-18T06:00:48.158444+00:00",
+  "finished_at": "2026-10-18T06:01:07.005569+00:00",
+  "attempted": 10,
+  "succeeded": 10,
+  "failed": 0,
+  "jobs": [
+    {
+      "name": "concrete-harbor-landscape",
+      "aspect_ratio": "16:9",
+      "status": "succeeded",
+      "job_id": "67c4cbda-80f7-45dd-87eb-26d981e2eb0c",
+      "error": null,
+      "result": {
+        "video": "/api/v1/jobs/67c4cbda-80f7-45dd-87eb-26d981e2eb0c/artifacts/video_16x9.mp4",
+        "captions": "/api/v1/jobs/67c4cbda-80f7-45dd-87eb-26d981e2eb0c/artifacts/captions.srt",
+        "timeline": "/api/v1/jobs/67c4cbda-80f7-45dd-87eb-26d981e2eb0c/artifacts/timeline.json",
+        "manifest": "/api/v1/jobs/67c4cbda-80f7-45dd-87eb-26d981e2eb0c/artifacts/manifest.json"
+      },
+      "artifact_validation": {
+        "passed": true,
+        "checks": {
+          "files_nonempty": true,
+          "mp4_signature": true,
+          "timeline_contiguous": true,
+          "manifest_job_id": true,
+          "caption_cue_count": true
+        },
+        "downloaded_files": {
+          "captions": "test-pack\\stage5b-artifacts\\67c4cbda-80f7-45dd-87eb-26d981e2eb0c\\captions.srt",
+          "manifest": "test-pack\\stage5b-artifacts\\67c4cbda-80f7-45dd-87eb-26d981e2eb0c\\manifest.json",
+          "timeline": "test-pack\\stage5b-artifacts\\67c4cbda-80f7-45dd-87eb-26d981e2eb0c\\timeline.json",
+          "video": "test-pack\\stage5b-artifacts\\67c4cbda-80f7-45dd-87eb-26d981e2eb0c\\video_16x9.mp4"
+        },
+        "duration_seconds": 5.6
+      },
+      "elapsed_seconds": 1.828
+    },
+    {
+      "name": "abstract-resilience-portrait",
+      "aspect_ratio": "9:16",
+      "status": "succeeded",
+      "job_id": "a79c3af1-3c54-4160-90be-f48519591b03",
+      "error": null,
+      "result": {
+        "video": "/api/v1/jobs/a79c3af1-3c54-4160-90be-f48519591b03/artifacts/video_9x16.mp4",
+        "captions": "/api/v1/jobs/a79c3af1-3c54-4160-90be-f48519591b03/artifacts/captions.srt",
+        "timeline": "/api/v1/jobs/a79c3af1-3c54-4160-90be-f48519591b03/artifacts/timeline.json",
+        "manifest": "/api/v1/jobs/a79c3af1-3c54-4160-90be-f48519591b03/artifacts/manifest.json"
+      },
+      "artifact_validation": {
+        "passed": true,
+        "checks": {
+          "files_nonempty": true,
+          "mp4_signature": true,
+          "timeline_contiguous": true,
+          "manifest_job_id": true,
+          "caption_cue_count": true
+        },
+        "downloaded_files": {
+          "captions": "test-pack\\stage5b-artifacts\\a79c3af1-3c54-4160-90be-f48519591b03\\captions.srt",
+          "manifest": "test-pack\\stage5b-artifacts\\a79c3af1-3c54-4160-90be-f48519591b03\\manifest.json",
+          "timeline": "test-pack\\stage5b-artifacts\\a79c3af1-3c54-4160-90be-f48519591b03\\timeline.json",
+          "video": "test-pack\\stage5b-artifacts\\a79c3af1-3c54-4160-90be-f48519591b03\\video_9x16.mp4"
+        },
+        "duration_seconds": 6.0
+      },
+      "elapsed_seconds": 1.656
+    },
+    {
+      "name": "statistics-square",
+      "aspect_ratio": "1:1",
+      "status": "succeeded",
+      "job_id": "a653f967-c1aa-4f85-9102-75f14138e014",
+      "error": null,
+      "result": {
+        "video": "/api/v1/jobs/a653f967-c1aa-4f85-9102-75f14138e014/artifacts/video_1x1.mp4",
+        "captions": "/api/v1/jobs/a653f967-c1aa-4f85-9102-75f14138e014/artifacts/captions.srt",
+        "timeline": "/api/v1/jobs/a653f967-c1aa-4f85-9102-75f14138e014/artifacts/timeline.json",
+        "manifest": "/api/v1/jobs/a653f967-c1aa-4f85-9102-75f14138e014/artifacts/manifest.json"
+      },
+      "artifact_validation": {
+        "passed": true,
+        "checks": {
+          "files_nonempty": true,
+          "mp4_signature": true,
+          "timeline_contiguous": true,
+          "manifest_job_id": true,
+          "caption_cue_count": true
+        },
+        "downloaded_files": {
+          "captions": "test-pack\\stage5b-artifacts\\a653f967-c1aa-4f85-9102-75f14138e014\\captions.srt",
+          "manifest": "test-pack\\stage5b-artifacts\\a653f967-c1aa-4f85-9102-75f14138e014\\manifest.json",
+          "timeline": "test-pack\\stage5b-artifacts\\a653f967-c1aa-4f85-9102-75f14138e014\\timeline.json",
+          "video": "test-pack\\stage5b-artifacts\\a653f967-c1aa-4f85-9102-75f14138e014\\video_1x1.mp4"
+        },
+        "duration_seconds": 8.0
+      },
+      "elapsed_seconds": 1.704
+    },
+    {
+      "name": "ambiguous-bank-landscape",
+      "aspect_ratio": "16:9",
+      "status": "succeeded",
+      "job_id": "7a6f810b-9a04-4900-acc5-bc9ac7b942f6",
+      "error": null,
+      "result": {
+        "video": "/api/v1/jobs/7a6f810b-9a04-4900-acc5-bc9ac7b942f6/artifacts/video_16x9.mp4",
+        "captions": "/api/v1/jobs/7a6f810b-9a04-4900-acc5-bc9ac7b942f6/artifacts/captions.srt",
+        "timeline": "/api/v1/jobs/7a6f810b-9a04-4900-acc5-bc9ac7b942f6/artifacts/timeline.json",
+        "manifest": "/api/v1/jobs/7a6f810b-9a04-4900-acc5-bc9ac7b942f6/artifacts/manifest.json"
+      },
+      "artifact_validation": {
+        "passed": true,
+        "checks": {
+          "files_nonempty": true,
+          "mp4_signature": true,
+          "timeline_contiguous": true,
+          "manifest_job_id": true,
+          "caption_cue_count": true
+        },
+        "downloaded_files": {
+          "captions": "test-pack\\stage5b-artifacts\\7a6f810b-9a04-4900-acc5-bc9ac7b942f6\\captions.srt",
+          "manifest": "test-pack\\stage5b-artifacts\\7a6f810b-9a04-4900-acc5-bc9ac7b942f6\\manifest.json",
+          "timeline": "test-pack\\stage5b-artifacts\\7a6f810b-9a04-4900-acc5-bc9ac7b942f6\\timeline.json",
+          "video": "test-pack\\stage5b-artifacts\\7a6f810b-9a04-4900-acc5-bc9ac7b942f6\\video_16x9.mp4"
+        },
+        "duration_seconds": 8.0
+      },
+      "elapsed_seconds": 1.656
+    },
+    {
+      "name": "named-entities-portrait",
+      "aspect_ratio": "9:16",
+      "status": "succeeded",
+      "job_id": "d5cb687d-f615-4a06-91e6-e3f135f25d76",
+      "error": null,
+      "result": {
+        "video": "/api/v1/jobs/d5cb687d-f615-4a06-91e6-e3f135f25d76/artifacts/video_9x16.mp4",
+        "captions": "/api/v1/jobs/d5cb687d-f615-4a06-91e6-e3f135f25d76/artifacts/captions.srt",
+        "timeline": "/api/v1/jobs/d5cb687d-f615-4a06-91e6-e3f135f25d76/artifacts/timeline.json",
+        "manifest": "/api/v1/jobs/d5cb687d-f615-4a06-91e6-e3f135f25d76/artifacts/manifest.json"
+      },
+      "artifact_validation": {
+        "passed": true,
+        "checks": {
+          "files_nonempty": true,
+          "mp4_signature": true,
+          "timeline_contiguous": true,
+          "manifest_job_id": true,
+          "caption_cue_count": true
+        },
+        "downloaded_files": {
+          "captions": "test-pack\\stage5b-artifacts\\d5cb687d-f615-4a06-91e6-e3f135f25d76\\captions.srt",
+          "manifest": "test-pack\\stage5b-artifacts\\d5cb687d-f615-4a06-91e6-e3f135f25d76\\manifest.json",
+          "timeline": "test-pack\\stage5b-artifacts\\d5cb687d-f615-4a06-91e6-e3f135f25d76\\timeline.json",
+          "video": "test-pack\\stage5b-artifacts\\d5cb687d-f615-4a06-91e6-e3f135f25d76\\video_9x16.mp4"
+        },
+        "duration_seconds": 6.8
+      },
+      "elapsed_seconds": 1.64
+    },
+    {
+      "name": "sensitive-wildfire-square",
+      "aspect_ratio": "1:1",
+      "status": "succeeded",
+      "job_id": "a38277ab-80da-47ca-8a45-5fa918e78c83",
+      "error": null,
+      "result": {
+        "video": "/api/v1/jobs/a38277ab-80da-47ca-8a45-5fa918e78c83/artifacts/video_1x1.mp4",
+        "captions": "/api/v1/jobs/a38277ab-80da-47ca-8a45-5fa918e78c83/artifacts/captions.srt",
+        "timeline": "/api/v1/jobs/a38277ab-80da-47ca-8a45-5fa918e78c83/artifacts/timeline.json",
+        "manifest": "/api/v1/jobs/a38277ab-80da-47ca-8a45-5fa918e78c83/artifacts/manifest.json"
+      },
+      "artifact_validation": {
+        "passed": true,
+        "checks": {
+          "files_nonempty": true,
+          "mp4_signature": true,
+          "timeline_contiguous": true,
+          "manifest_job_id": true,
+          "caption_cue_count": true
+        },
+        "downloaded_files": {
+          "captions": "test-pack\\stage5b-artifacts\\a38277ab-80da-47ca-8a45-5fa918e78c83\\captions.srt",
+          "manifest": "test-pack\\stage5b-artifacts\\a38277ab-80da-47ca-8a45-5fa918e78c83\\manifest.json",
+          "timeline": "test-pack\\stage5b-artifacts\\a38277ab-80da-47ca-8a45-5fa918e78c83\\timeline.json",
+          "video": "test-pack\\stage5b-artifacts\\a38277ab-80da-47ca-8a45-5fa918e78c83\\video_1x1.mp4"
+        },
+        "duration_seconds": 7.2
+      },
+      "elapsed_seconds": 1.157
+    },
+    {
+      "name": "very-short-script-landscape",
+      "aspect_ratio": "16:9",
+      "status": "succeeded",
+      "job_id": "1834b22a-a88c-47ec-9b47-72f25631fb5e",
+      "error": null,
+      "result": {
+        "video": "/api/v1/jobs/1834b22a-a88c-47ec-9b47-72f25631fb5e/artifacts/video_16x9.mp4",
+        "captions": "/api/v1/jobs/1834b22a-a88c-47ec-9b47-72f25631fb5e/artifacts/captions.srt",
+        "timeline": "/api/v1/jobs/1834b22a-a88c-47ec-9b47-72f25631fb5e/artifacts/timeline.json",
+        "manifest": "/api/v1/jobs/1834b22a-a88c-47ec-9b47-72f25631fb5e/artifacts/manifest.json"
+      },
+      "artifact_validation": {
+        "passed": true,
+        "checks": {
+          "files_nonempty": true,
+          "mp4_signature": true,
+          "timeline_contiguous": true,
+          "manifest_job_id": true,
+          "caption_cue_count": true
+        },
+        "downloaded_files": {
+          "captions": "test-pack\\stage5b-artifacts\\1834b22a-a88c-47ec-9b47-72f25631fb5e\\captions.srt",
+          "manifest": "test-pack\\stage5b-artifacts\\1834b22a-a88c-47ec-9b47-72f25631fb5e\\manifest.json",
+          "timeline": "test-pack\\stage5b-artifacts\\1834b22a-a88c-47ec-9b47-72f25631fb5e\\timeline.json",
+          "video": "test-pack\\stage5b-artifacts\\1834b22a-a88c-47ec-9b47-72f25631fb5e\\video_16x9.mp4"
+        },
+        "duration_seconds": 2.0
+      },
+      "elapsed_seconds": 1.14
+    },
+    {
+      "name": "longer-community-garden-portrait",
+      "aspect_ratio": "9:16",
+      "status": "succeeded",
+      "job_id": "58499b99-a6f6-45c5-8bb3-f0186051693e",
+      "error": null,
+      "result": {
+        "video": "/api/v1/jobs/58499b99-a6f6-45c5-8bb3-f0186051693e/artifacts/video_9x16.mp4",
+        "captions": "/api/v1/jobs/58499b99-a6f6-45c5-8bb3-f0186051693e/artifacts/captions.srt",
+        "timeline": "/api/v1/jobs/58499b99-a6f6-45c5-8bb3-f0186051693e/artifacts/timeline.json",
+        "manifest": "/api/v1/jobs/58499b99-a6f6-45c5-8bb3-f0186051693e/artifacts/manifest.json"
+      },
+      "artifact_validation": {
+        "passed": true,
+        "checks": {
+          "files_nonempty": true,
+          "mp4_signature": true,
+          "timeline_contiguous": true,
+          "manifest_job_id": true,
+          "caption_cue_count": true
+        },
+        "downloaded_files": {
+          "captions": "test-pack\\stage5b-artifacts\\58499b99-a6f6-45c5-8bb3-f0186051693e\\captions.srt",
+          "manifest": "test-pack\\stage5b-artifacts\\58499b99-a6f6-45c5-8bb3-f0186051693e\\manifest.json",
+          "timeline": "test-pack\\stage5b-artifacts\\58499b99-a6f6-45c5-8bb3-f0186051693e\\timeline.json",
+          "video": "test-pack\\stage5b-artifacts\\58499b99-a6f6-45c5-8bb3-f0186051693e\\video_9x16.mp4"
+        },
+        "duration_seconds": 23.6
+      },
+      "elapsed_seconds": 4.25
+    },
+    {
+      "name": "abstract-time-square",
+      "aspect_ratio": "1:1",
+      "status": "succeeded",
+      "job_id": "eb0d4ea1-6b5f-47fa-809c-8c8091b51dc4",
+      "error": null,
+      "result": {
+        "video": "/api/v1/jobs/eb0d4ea1-6b5f-47fa-809c-8c8091b51dc4/artifacts/video_1x1.mp4",
+        "captions": "/api/v1/jobs/eb0d4ea1-6b5f-47fa-809c-8c8091b51dc4/artifacts/captions.srt",
+        "timeline": "/api/v1/jobs/eb0d4ea1-6b5f-47fa-809c-8c8091b51dc4/artifacts/timeline.json",
+        "manifest": "/api/v1/jobs/eb0d4ea1-6b5f-47fa-809c-8c8091b51dc4/artifacts/manifest.json"
+      },
+      "artifact_validation": {
+        "passed": true,
+        "checks": {
+          "files_nonempty": true,
+          "mp4_signature": true,
+          "timeline_contiguous": true,
+          "manifest_job_id": true,
+          "caption_cue_count": true
+        },
+        "downloaded_files": {
+          "captions": "test-pack\\stage5b-artifacts\\eb0d4ea1-6b5f-47fa-809c-8c8091b51dc4\\captions.srt",
+          "manifest": "test-pack\\stage5b-artifacts\\eb0d4ea1-6b5f-47fa-809c-8c8091b51dc4\\manifest.json",
+          "timeline": "test-pack\\stage5b-artifacts\\eb0d4ea1-6b5f-47fa-809c-8c8091b51dc4\\timeline.json",
+          "video": "test-pack\\stage5b-artifacts\\eb0d4ea1-6b5f-47fa-809c-8c8091b51dc4\\video_1x1.mp4"
+        },
+        "duration_seconds": 7.6
+      },
+      "elapsed_seconds": 1.641
+    },
+    {
+      "name": "concrete-accessibility-landscape",
+      "aspect_ratio": "16:9",
+      "status": "succeeded",
+      "job_id": "02be72c2-4bf5-487e-a45f-e834a523ab2f",
+      "error": null,
+      "result": {
+        "video": "/api/v1/jobs/02be72c2-4bf5-487e-a45f-e834a523ab2f/artifacts/video_16x9.mp4",
+        "captions": "/api/v1/jobs/02be72c2-4bf5-487e-a45f-e834a523ab2f/artifacts/captions.srt",
+        "timeline": "/api/v1/jobs/02be72c2-4bf5-487e-a45f-e834a523ab2f/artifacts/timeline.json",
+        "manifest": "/api/v1/jobs/02be72c2-4bf5-487e-a45f-e834a523ab2f/artifacts/manifest.json"
+      },
+      "artifact_validation": {
+        "passed": true,
+        "checks": {
+          "files_nonempty": true,
+          "mp4_signature": true,
+          "timeline_contiguous": true,
+          "manifest_job_id": true,
+          "caption_cue_count": true
+        },
+        "downloaded_files": {
+          "captions": "test-pack\\stage5b-artifacts\\02be72c2-4bf5-487e-a45f-e834a523ab2f\\captions.srt",
+          "manifest": "test-pack\\stage5b-artifacts\\02be72c2-4bf5-487e-a45f-e834a523ab2f\\manifest.json",
+          "timeline": "test-pack\\stage5b-artifacts\\02be72c2-4bf5-487e-a45f-e834a523ab2f\\timeline.json",
+          "video": "test-pack\\stage5b-artifacts\\02be72c2-4bf5-487e-a45f-e834a523ab2f\\video_16x9.mp4"
+        },
+        "duration_seconds": 8.4
+      },
+      "elapsed_seconds": 2.172
+    }
+  ]
+}

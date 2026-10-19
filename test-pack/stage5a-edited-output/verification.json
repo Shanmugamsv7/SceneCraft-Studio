@@ -1,0 +1,20 @@
+{
+    "job_id":  "2c689b47-d744-440e-a485-f7a8c0ae6592",
+    "initial_state":  "succeeded",
+    "final_state":  "succeeded",
+    "full_render":  true,
+    "aspect_ratio":  "1:1",
+    "artifact_files":  [
+                           "video_1x1.mp4",
+                           "captions.srt",
+                           "timeline.json",
+                           "manifest.json"
+                       ],
+    "edit_checks":  [
+                        "narration_text",
+                        "caption_text",
+                        "selected_visual_id",
+                        "SRT caption"
+                    ],
+    "results":  "all downloaded artifacts matched the latest saved edits"
+}

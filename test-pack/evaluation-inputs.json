@@ -1,0 +1,52 @@
+[
+  {
+    "name": "concrete-harbor-landscape",
+    "script": "At sunrise, fishing boats return to the harbor. A market opens along the waterfront.",
+    "aspect_ratio": "16:9"
+  },
+  {
+    "name": "abstract-resilience-portrait",
+    "script": "Resilience often grows through small acts of patience. Neighbors share tools and keep showing up.",
+    "aspect_ratio": "9:16"
+  },
+  {
+    "name": "statistics-square",
+    "script": "In this fictional example, the library welcomed 120 visitors on Monday and 180 on Friday. The difference is 60 visits.",
+    "aspect_ratio": "1:1"
+  },
+  {
+    "name": "ambiguous-bank-landscape",
+    "script": "The family sat on the river bank to watch the current. Across town, a bank opened its doors at nine.",
+    "aspect_ratio": "16:9"
+  },
+  {
+    "name": "named-entities-portrait",
+    "script": "Visitors look up at the Eiffel Tower in Paris. Researchers at NASA study weather patterns from space.",
+    "aspect_ratio": "9:16"
+  },
+  {
+    "name": "sensitive-wildfire-square",
+    "script": "After a wildfire, local teams share verified safety information and help families find temporary shelter. Recovery takes time.",
+    "aspect_ratio": "1:1"
+  },
+  {
+    "name": "very-short-script-landscape",
+    "script": "Rain falls.",
+    "aspect_ratio": "16:9"
+  },
+  {
+    "name": "longer-community-garden-portrait",
+    "script": "A vacant lot can become a shared garden when residents plan together. They test the soil, choose plants suited to the local climate, and build paths that are easier to navigate. Volunteers take turns watering the beds through dry weeks. By autumn, the harvest is divided among neighbors, while the garden remains a place to meet, learn, and rest.",
+    "aspect_ratio": "9:16"
+  },
+  {
+    "name": "abstract-time-square",
+    "script": "Time can feel different when people are waiting. A familiar routine may make a difficult afternoon feel more manageable.",
+    "aspect_ratio": "1:1"
+  },
+  {
+    "name": "concrete-accessibility-landscape",
+    "script": "A step-free entrance helps more people reach the community center. Clear signs and a quiet room can make the visit easier.",
+    "aspect_ratio": "16:9"
+  }
+]

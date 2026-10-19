@@ -1,0 +1,37 @@
+{
+  "started_at": "2026-10-18T05:01:00.260762+00:00",
+  "finished_at": "2026-10-18T05:01:03.019136+00:00",
+  "attempted": 2,
+  "succeeded": 2,
+  "failed": 0,
+  "jobs": [
+    {
+      "name": "short-landscape-script",
+      "aspect_ratio": "16:9",
+      "status": "succeeded",
+      "job_id": "6c7d6ac1-f0a1-4cc2-83d9-80b5044c2b92",
+      "error": null,
+      "result": {
+        "video": "/api/v1/jobs/6c7d6ac1-f0a1-4cc2-83d9-80b5044c2b92/artifacts/video_16x9.mp4",
+        "captions": "/api/v1/jobs/6c7d6ac1-f0a1-4cc2-83d9-80b5044c2b92/artifacts/captions.srt",
+        "timeline": "/api/v1/jobs/6c7d6ac1-f0a1-4cc2-83d9-80b5044c2b92/artifacts/timeline.json",
+        "manifest": "/api/v1/jobs/6c7d6ac1-f0a1-4cc2-83d9-80b5044c2b92/artifacts/manifest.json"
+      },
+      "elapsed_seconds": 1.719
+    },
+    {
+      "name": "short-portrait-script",
+      "aspect_ratio": "9:16",
+      "status": "succeeded",
+      "job_id": "762f7c0f-2f97-495a-99d4-c79e5f75341b",
+      "error": null,
+      "result": {
+        "video": "/api/v1/jobs/762f7c0f-2f97-495a-99d4-c79e5f75341b/artifacts/video_9x16.mp4",
+        "captions": "/api/v1/jobs/762f7c0f-2f97-495a-99d4-c79e5f75341b/artifacts/captions.srt",
+        "timeline": "/api/v1/jobs/762f7c0f-2f97-495a-99d4-c79e5f75341b/artifacts/timeline.json",
+        "manifest": "/api/v1/jobs/762f7c0f-2f97-495a-99d4-c79e5f75341b/artifacts/manifest.json"
+      },
+      "elapsed_seconds": 1.046
+    }
+  ]
+}

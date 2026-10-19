@@ -1,0 +1,7 @@
+1
+00:00:00,000 --> 00:00:04,400
+The family sat on the river bank to watch the current.
+
+2
+00:00:04,400 --> 00:00:08,000
+Across town, a bank opened its doors at nine.

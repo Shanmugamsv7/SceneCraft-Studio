@@ -1,0 +1,22 @@
+﻿test_case,scene,selected_visual,reviewer_score_1_to_5,reviewer_notes,review_status
+concrete-harbor-landscape,scene-1,mock-color-66083df7-925f-40a7-8330-5b02fdea07bc-1-option-1-g0,,,PENDING HUMAN REVIEW
+concrete-harbor-landscape,scene-2,mock-color-66083df7-925f-40a7-8330-5b02fdea07bc-2-option-1-g0,,,PENDING HUMAN REVIEW
+abstract-resilience-portrait,scene-1,mock-color-a41f5155-6d48-4aa8-bed5-283f8f81028d-1-option-1-g0,,,PENDING HUMAN REVIEW
+abstract-resilience-portrait,scene-2,mock-color-a41f5155-6d48-4aa8-bed5-283f8f81028d-2-option-1-g0,,,PENDING HUMAN REVIEW
+statistics-square,scene-1,mock-color-8881abb0-52a8-4eaf-99b9-a5a72a7b52c7-1-option-1-g0,,,PENDING HUMAN REVIEW
+statistics-square,scene-2,mock-color-8881abb0-52a8-4eaf-99b9-a5a72a7b52c7-2-option-1-g0,,,PENDING HUMAN REVIEW
+ambiguous-bank-landscape,scene-1,mock-color-7f7d5b14-4f46-43eb-8a50-24fedc044da2-1-option-1-g0,,,PENDING HUMAN REVIEW
+ambiguous-bank-landscape,scene-2,mock-color-7f7d5b14-4f46-43eb-8a50-24fedc044da2-2-option-1-g0,,,PENDING HUMAN REVIEW
+named-entities-portrait,scene-1,mock-color-e22c7dfa-d873-4e6d-ae61-690c7d96e0c2-1-option-1-g0,,,PENDING HUMAN REVIEW
+named-entities-portrait,scene-2,mock-color-e22c7dfa-d873-4e6d-ae61-690c7d96e0c2-2-option-1-g0,,,PENDING HUMAN REVIEW
+sensitive-wildfire-square,scene-1,mock-color-d469589e-e358-4c5d-be4c-0a5549e9897a-1-option-1-g0,,,PENDING HUMAN REVIEW
+sensitive-wildfire-square,scene-2,mock-color-d469589e-e358-4c5d-be4c-0a5549e9897a-2-option-1-g0,,,PENDING HUMAN REVIEW
+very-short-script-landscape,scene-1,mock-color-8d2d8593-59d7-4a8e-8aaa-96c31d9986ae-1-option-1-g0,,,PENDING HUMAN REVIEW
+longer-community-garden-portrait,scene-1,mock-color-34d2ce9d-ff2a-462b-a586-6bba080a8d71-1-option-1-g0,,,PENDING HUMAN REVIEW
+longer-community-garden-portrait,scene-2,mock-color-34d2ce9d-ff2a-462b-a586-6bba080a8d71-2-option-1-g0,,,PENDING HUMAN REVIEW
+longer-community-garden-portrait,scene-3,mock-color-34d2ce9d-ff2a-462b-a586-6bba080a8d71-3-option-1-g0,,,PENDING HUMAN REVIEW
+longer-community-garden-portrait,scene-4,mock-color-34d2ce9d-ff2a-462b-a586-6bba080a8d71-4-option-1-g0,,,PENDING HUMAN REVIEW
+abstract-time-square,scene-1,mock-color-2b4f9cb2-476a-4b0a-ac90-dd398e1cf584-1-option-1-g0,,,PENDING HUMAN REVIEW
+abstract-time-square,scene-2,mock-color-2b4f9cb2-476a-4b0a-ac90-dd398e1cf584-2-option-1-g0,,,PENDING HUMAN REVIEW
+concrete-accessibility-landscape,scene-1,mock-color-013dfa8e-d95c-4425-8ef2-0a8b44ae0c4c-1-option-1-g0,,,PENDING HUMAN REVIEW
+concrete-accessibility-landscape,scene-2,mock-color-013dfa8e-d95c-4425-8ef2-0a8b44ae0c4c-2-option-1-g0,,,PENDING HUMAN REVIEW

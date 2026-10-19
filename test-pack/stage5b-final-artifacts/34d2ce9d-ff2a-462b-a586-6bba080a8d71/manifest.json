@@ -1,0 +1,113 @@
+{
+  "job_id": "34d2ce9d-ff2a-462b-a586-6bba080a8d71",
+  "provider": {
+    "speech": "mock_sine_test_tone",
+    "speech_details": {
+      "name": "mock-local",
+      "version": "2"
+    },
+    "footage": {
+      "name": "mock-local",
+      "version": "2"
+    }
+  },
+  "settings": {
+    "aspect_ratio": "9:16",
+    "resolution": "1080x1920",
+    "frame_rate": 30,
+    "video_codec": "H.264",
+    "audio_codec": "AAC",
+    "seed": null,
+    "selection": "Deterministic order; no random seed used"
+  },
+  "timings": {
+    "source_audio_duration_seconds": 23.6,
+    "rendered_duration_seconds": 23.6,
+    "av_duration_drift_seconds": 0.0,
+    "processing_seconds": 3.438
+  },
+  "cost": {
+    "status": "unavailable_no_paid_provider",
+    "amount": null,
+    "currency": null
+  },
+  "warnings": [
+    "Generated color visuals are mock graphics, not genuine footage or stock media.",
+    "Mock narration is a 440 Hz test tone, not speech or real TTS."
+  ],
+  "rights": {
+    "status": "generated_mock_only",
+    "third_party_media_used": false,
+    "unverified_assets_used": false,
+    "policy": "Only assets with verified rights may be used by a future footage provider."
+  },
+  "assets": [
+    {
+      "asset_id": "mock-color-34d2ce9d-ff2a-462b-a586-6bba080a8d71-1-option-1-g0",
+      "source": "FFmpeg lavfi color generator",
+      "source_url": null,
+      "license": "Generated locally; no third-party media licence applies; not stock footage",
+      "license_verified": false,
+      "attribution": "Generated locally by the SceneCraft Studio mock provider",
+      "ai_generated": false,
+      "selection_reason": "Offline generated-color fallback option; scene text is not semantically matched",
+      "relevance_score": null
+    },
+    {
+      "asset_id": "mock-color-34d2ce9d-ff2a-462b-a586-6bba080a8d71-2-option-1-g0",
+      "source": "FFmpeg lavfi color generator",
+      "source_url": null,
+      "license": "Generated locally; no third-party media licence applies; not stock footage",
+      "license_verified": false,
+      "attribution": "Generated locally by the SceneCraft Studio mock provider",
+      "ai_generated": false,
+      "selection_reason": "Offline generated-color fallback option; scene text is not semantically matched",
+      "relevance_score": null
+    },
+    {
+      "asset_id": "mock-color-34d2ce9d-ff2a-462b-a586-6bba080a8d71-3-option-1-g0",
+      "source": "FFmpeg lavfi color generator",
+      "source_url": null,
+      "license": "Generated locally; no third-party media licence applies; not stock footage",
+      "license_verified": false,
+      "attribution": "Generated locally by the SceneCraft Studio mock provider",
+      "ai_generated": false,
+      "selection_reason": "Offline generated-color fallback option; scene text is not semantically matched",
+      "relevance_score": null
+    },
+    {
+      "asset_id": "mock-color-34d2ce9d-ff2a-462b-a586-6bba080a8d71-4-option-1-g0",
+      "source": "FFmpeg lavfi color generator",
+      "source_url": null,
+      "license": "Generated locally; no third-party media licence applies; not stock footage",
+      "license_verified": false,
+      "attribution": "Generated locally by the SceneCraft Studio mock provider",
+      "ai_generated": false,
+      "selection_reason": "Offline generated-color fallback option; scene text is not semantically matched",
+      "relevance_score": null
+    }
+  ],
+  "warnings_detail": [
+    "Mock generated visual; not genuine footage or stock media",
+    "Mock generated visual; not genuine footage or stock media",
+    "Mock generated visual; not genuine footage or stock media",
+    "Mock generated visual; not genuine footage or stock media"
+  ],
+  "measured_output": {
+    "duration_seconds": 23.6,
+    "video": {
+      "codec_name": "h264",
+      "codec_type": "video",
+      "width": 1080,
+      "height": 1920,
+      "avg_frame_rate": "30/1",
+      "duration": "23.600000"
+    },
+    "audio": {
+      "codec_name": "aac",
+      "codec_type": "audio",
+      "avg_frame_rate": "0/0",
+      "duration": "23.600000"
+    }
+  }
+}

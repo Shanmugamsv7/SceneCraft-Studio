@@ -1,0 +1,18 @@
+{
+  "source_evidence": "stage5a-edited-output/",
+  "job_id": "2c689b47-d744-440e-a485-f7a8c0ae6592",
+  "video_file": "video_1x1.mp4",
+  "checks": {
+    "previous_live_edit_record_succeeded": true,
+    "all_four_files_present": true,
+    "manifest_job_matches": true,
+    "one_caption_per_scene": true,
+    "caption_text_matches_timeline": true,
+    "caption_times_match_timeline": true,
+    "h264_aac": true,
+    "one_to_one_1080p_30fps": true,
+    "duration_matches_timeline_manifest": true
+  },
+  "passed": true,
+  "scope": "read-only revalidation; prior sample files were not overwritten"
+}

@@ -1,0 +1,20 @@
+INFO:     Started server process [12028]
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8766 (Press CTRL+C to quit)
+{"timestamp": "2026-10-18T05:00:59.862797+00:00", "level": "INFO", "job_id": "-", "correlation_id": "a6a6b6e4-b8d8-43b3-84cb-fcfe2c8abc37", "message": "request complete method=GET route=/ready status=200"}
+{"timestamp": "2026-10-18T05:01:00.395474+00:00", "level": "INFO", "job_id": "6c7d6ac1-f0a1-4cc2-83d9-80b5044c2b92", "correlation_id": "b3f2b135-3b7b-4113-99ac-a7fae265d01f", "message": "job started"}
+{"timestamp": "2026-10-18T05:01:00.397473+00:00", "level": "INFO", "job_id": "6c7d6ac1-f0a1-4cc2-83d9-80b5044c2b92", "correlation_id": "b3f2b135-3b7b-4113-99ac-a7fae265d01f", "message": "job accepted"}
+{"timestamp": "2026-10-18T05:01:00.400474+00:00", "level": "INFO", "job_id": "-", "correlation_id": "b3f2b135-3b7b-4113-99ac-a7fae265d01f", "message": "request complete method=POST route=/api/v1/broll/jobs status=202"}
+{"timestamp": "2026-10-18T05:01:00.408988+00:00", "level": "INFO", "job_id": "6c7d6ac1-f0a1-4cc2-83d9-80b5044c2b92", "correlation_id": "37616bba-64e7-497a-8455-a69e40b68099", "message": "request complete method=GET route=/api/v1/jobs/{job_id} status=200"}
+{"timestamp": "2026-10-18T05:01:00.919307+00:00", "level": "INFO", "job_id": "6c7d6ac1-f0a1-4cc2-83d9-80b5044c2b92", "correlation_id": "4a38ae87-e5c8-446c-afd1-6c68ef105bf2", "message": "request complete method=GET route=/api/v1/jobs/{job_id} status=200"}
+{"timestamp": "2026-10-18T05:01:01.451993+00:00", "level": "INFO", "job_id": "6c7d6ac1-f0a1-4cc2-83d9-80b5044c2b92", "correlation_id": "f6952911-9c98-4b25-a3db-178447ba4a8b", "message": "request complete method=GET route=/api/v1/jobs/{job_id} status=200"}
+{"timestamp": "2026-10-18T05:01:01.624594+00:00", "level": "INFO", "job_id": "6c7d6ac1-f0a1-4cc2-83d9-80b5044c2b92", "correlation_id": "b3f2b135-3b7b-4113-99ac-a7fae265d01f", "message": "job succeeded"}
+{"timestamp": "2026-10-18T05:01:01.966089+00:00", "level": "INFO", "job_id": "6c7d6ac1-f0a1-4cc2-83d9-80b5044c2b92", "correlation_id": "97138564-8de9-4249-9958-ebc29f80fa09", "message": "request complete method=GET route=/api/v1/jobs/{job_id} status=200"}
+{"timestamp": "2026-10-18T05:01:01.990891+00:00", "level": "INFO", "job_id": "762f7c0f-2f97-495a-99d4-c79e5f75341b", "correlation_id": "ce915437-7d25-47ef-88cb-ada4b8a7774d", "message": "job accepted"}
+{"timestamp": "2026-10-18T05:01:01.990891+00:00", "level": "INFO", "job_id": "762f7c0f-2f97-495a-99d4-c79e5f75341b", "correlation_id": "ce915437-7d25-47ef-88cb-ada4b8a7774d", "message": "job started"}
+{"timestamp": "2026-10-18T05:01:01.990891+00:00", "level": "INFO", "job_id": "-", "correlation_id": "ce915437-7d25-47ef-88cb-ada4b8a7774d", "message": "request complete method=POST route=/api/v1/broll/jobs status=202"}
+{"timestamp": "2026-10-18T05:01:02.006860+00:00", "level": "INFO", "job_id": "762f7c0f-2f97-495a-99d4-c79e5f75341b", "correlation_id": "9f640289-bb04-4982-8800-160672925706", "message": "request complete method=GET route=/api/v1/jobs/{job_id} status=200"}
+{"timestamp": "2026-10-18T05:01:02.512639+00:00", "level": "INFO", "job_id": "762f7c0f-2f97-495a-99d4-c79e5f75341b", "correlation_id": "cc972493-971e-4c49-90cf-0a22ac0a8102", "message": "request complete method=GET route=/api/v1/jobs/{job_id} status=200"}
+{"timestamp": "2026-10-18T05:01:02.826192+00:00", "level": "INFO", "job_id": "762f7c0f-2f97-495a-99d4-c79e5f75341b", "correlation_id": "ce915437-7d25-47ef-88cb-ada4b8a7774d", "message": "job succeeded"}
+{"timestamp": "2026-10-18T05:01:03.017121+00:00", "level": "INFO", "job_id": "762f7c0f-2f97-495a-99d4-c79e5f75341b", "correlation_id": "8db51755-1944-4aa9-9a82-310437f174e8", "message": "request complete method=GET route=/api/v1/jobs/{job_id} status=200"}

@@ -1,0 +1,7 @@
+1
+00:00:00,000 --> 00:00:06,000
+In this fictional example, the library welcomed 120 visitors on Monday and 180 on Friday.
+
+2
+00:00:06,000 --> 00:00:08,000
+The difference is 60 visits.

@@ -1,0 +1,631 @@
+openapi: 3.1.0
+info:
+  title: SceneCraft API
+  version: 0.2.0
+  description: >-
+    Local API for script-to-B-roll video drafts, scene edits, and artifact exports.
+    Providers are selected by server environment settings. Default mock mode generates
+    color cards and a clearly labelled sine test tone; it does not produce stock footage
+    or spoken narration.
+servers:
+  - url: http://127.0.0.1:8000
+paths:
+  /api/v1/footage/imports:
+    post:
+      operationId: importLocalFootage
+      summary: Import a local clip with a user-confirmed rights declaration
+      description: >-
+        Stores one validated video in the server's local footage library. The rights
+        declaration is supplied by the operator and is not independently verified.
+      parameters:
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/LocalFootageImport'
+      responses:
+        '201':
+          description: Clip stored and indexed for scene filename matching.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [asset_id, filename, provider, license, attribution, rights_basis, message]
+                properties:
+                  asset_id:
+                    type: string
+                  filename:
+                    type: string
+                  provider:
+                    const: local-library
+                  license:
+                    type: string
+                  attribution:
+                    type: string
+                  source_url:
+                    type: [string, 'null']
+                  rights_basis:
+                    const: user_attestation
+                  message:
+                    type: string
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/v1/providers:
+    get:
+      operationId: providerConfiguration
+      summary: Report active provider mode without exposing credentials
+      parameters:
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Active provider names, demo disclosure, and credential setting names.
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProviderInfo'
+  /api/v1/broll/jobs:
+    post:
+      operationId: createBrollJob
+      summary: Queue a script or uploaded-audio video draft
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/CreateJobRequest'
+      responses:
+        '202':
+          description: Job accepted; processing runs in a background worker.
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateJobResponse'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/v1/jobs/{job_id}:
+    get:
+      operationId: getJob
+      summary: Get job state, progress, error, and result links
+      parameters:
+        - $ref: '#/components/parameters/JobId'
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Current job state.
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /api/v1/jobs/{job_id}/scenes/{scene_id}:
+    get:
+      operationId: getJobScene
+      summary: Get an editable scene and its visual suggestions
+      parameters:
+        - $ref: '#/components/parameters/JobId'
+        - $ref: '#/components/parameters/SceneId'
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Scene narration, captions, timing, visual choices, and provenance.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Scene'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      operationId: editJobScene
+      summary: Edit scene narration, caption, or visual decision
+      parameters:
+        - $ref: '#/components/parameters/JobId'
+        - $ref: '#/components/parameters/SceneId'
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SceneEdit'
+      responses:
+        '200':
+          description: Saved scene edits. A full render is still required to update output files.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [scene, dirty, render_required]
+                properties:
+                  scene:
+                    $ref: '#/components/schemas/Scene'
+                  dirty:
+                    type: boolean
+                  render_required:
+                    type: boolean
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /api/v1/jobs/{job_id}/scenes/{scene_id}/regenerate:
+    post:
+      operationId: regenerateJobSceneVisual
+      summary: Request a fresh set of visual suggestions for one scene
+      description: The offline provider returns distinct generated color cards; these are mock graphics, not stock footage.
+      parameters:
+        - $ref: '#/components/parameters/JobId'
+        - $ref: '#/components/parameters/SceneId'
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '202':
+          description: Visual suggestions generated for the scene.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [job_id, scene, dirty]
+                properties:
+                  job_id:
+                    type: string
+                    format: uuid
+                  scene:
+                    $ref: '#/components/schemas/Scene'
+                  dirty:
+                    type: boolean
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '503':
+          $ref: '#/components/responses/InternalError'
+  /api/v1/jobs/{job_id}/render:
+    post:
+      operationId: renderEditedJob
+      summary: Rebuild the complete video using saved scene choices
+      description: Rebuilds the full output video; partial scene rendering is not implemented.
+      parameters:
+        - $ref: '#/components/parameters/JobId'
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                aspect_ratio:
+                  type: string
+                  enum: ['16:9', '9:16', '1:1']
+                  description: Optional output format override for this full rerender.
+      responses:
+        '202':
+          description: Full video render queued.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [job_id, status, full_render, status_url]
+                properties:
+                  job_id:
+                    type: string
+                    format: uuid
+                  status:
+                    const: queued
+                  full_render:
+                    const: true
+                  status_url:
+                    type: string
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+  /api/v1/jobs/{job_id}/artifacts/{filename}:
+    get:
+      operationId: getJobArtifact
+      summary: Download a completed job artifact
+      parameters:
+        - $ref: '#/components/parameters/JobId'
+        - name: filename
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [captions.srt, timeline.json, manifest.json, video_16x9.mp4, video_9x16.mp4, video_1x1.mp4]
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Artifact bytes; JSON artifacts are returned as JSON files.
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationId'
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+            application/json:
+              schema:
+                type: object
+            text/plain:
+              schema:
+                type: string
+            video/mp4:
+              schema:
+                type: string
+                format: binary
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /health:
+    get:
+      operationId: health
+      summary: Confirm the process is responding
+      parameters:
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Process is responding.
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationId'
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [status]
+                properties:
+                  status:
+                    const: ok
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /ready:
+    get:
+      operationId: readiness
+      summary: Check required local rendering dependencies and storage access
+      parameters:
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Service can accept work.
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Readiness'
+        '503':
+          description: One or more dependencies are unavailable.
+          headers:
+            X-Correlation-ID:
+              $ref: '#/components/headers/CorrelationId'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          $ref: '#/components/responses/InternalError'
+components:
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      description: >-
+        Reuses the original job for the same key and same normalized request. Reusing
+        the key for a different request returns 409. Records are held in memory only.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 128
+    CorrelationId:
+      name: X-Correlation-ID
+      in: header
+      required: false
+      description: Caller-supplied trace ID; invalid values are replaced with a generated ID.
+      schema:
+        type: string
+        maxLength: 128
+    JobId:
+      name: job_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    SceneId:
+      name: scene_id
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: '^scene-[1-9][0-9]*$'
+  headers:
+    CorrelationId:
+      description: Request correlation identifier, generated if none was supplied.
+      schema:
+        type: string
+  schemas:
+    ProviderInfo:
+      type: object
+      required: [mode, footage_provider, speech_provider, external_processing, disclosure, configuration, provider_links]
+      properties:
+        mode:
+          type: string
+          enum: [demo, mixed, real]
+        footage_provider:
+          type: string
+        speech_provider:
+          type: string
+        external_processing:
+          type: boolean
+        disclosure:
+          type: string
+        configuration:
+          type: object
+          additionalProperties:
+            type: string
+        provider_links:
+          type: object
+          additionalProperties:
+            type: string
+    LocalFootageImport:
+      type: object
+      required: [video, license, attribution, rights_confirmed]
+      properties:
+        video:
+          type: string
+          format: binary
+          description: MP4, MOV, M4V, WebM, OGV, or MKV within MAX_FOOTAGE_BYTES.
+        license:
+          type: string
+          minLength: 2
+          maxLength: 300
+        attribution:
+          type: string
+          minLength: 2
+          maxLength: 500
+        source_url:
+          type: string
+          format: uri
+          description: Optional HTTPS source page.
+        rights_confirmed:
+          type: boolean
+          const: true
+          description: Operator confirms they may use this clip and comply with its license.
+    CreateJobRequest:
+      type: object
+      properties:
+        script:
+          type: string
+          description: Script text. Provide this or audio, but not both.
+        aspect_ratio:
+          type: string
+          enum: ['16:9', '9:16', '1:1']
+          default: '16:9'
+        audio:
+          type: string
+          format: binary
+          description: MP3, WAV, or M4A, up to configured byte limit and 10 minutes.
+      oneOf:
+        - required: [script]
+        - required: [audio]
+    CreateJobResponse:
+      type: object
+      required: [job_id, status, status_url]
+      properties:
+        job_id:
+          type: string
+          format: uuid
+        status:
+          const: queued
+        status_url:
+          type: string
+    JobError:
+      type: object
+      required: [code, message, retryable, details]
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+        retryable:
+          type: boolean
+        details: {}
+    Job:
+      type: object
+      required: [job_id, status, progress, error, result, created_at]
+      properties:
+        job_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [queued, running, succeeded, failed]
+        progress:
+          type: integer
+          minimum: 0
+          maximum: 100
+        error:
+          oneOf:
+            - $ref: '#/components/schemas/JobError'
+            - type: 'null'
+        result:
+          oneOf:
+            - type: object
+              additionalProperties:
+                type: string
+            - type: 'null'
+        created_at:
+          type: string
+          format: date-time
+        scenes:
+          type: array
+          items:
+            $ref: '#/components/schemas/Scene'
+        dirty:
+          type: boolean
+    Visual:
+      type: object
+      required: [id, provider, source, license, license_verified, attribution, ai_generated, selection_reason, relevance_score]
+      properties:
+        id:
+          type: string
+        color:
+          type: string
+          description: Local generated-color value where supported by the provider.
+        provider:
+          type: string
+        source:
+          type: string
+        source_url:
+          type: [string, 'null']
+        thumbnail_url:
+          type: [string, 'null']
+          format: uri
+        license:
+          type: string
+        license_verified:
+          type: boolean
+        attribution:
+          type: string
+        ai_generated:
+          type: [boolean, 'null']
+          description: Null when provenance does not provide a trustworthy AI-generation indicator.
+        rights_basis:
+          type: string
+          description: Source of license/rights metadata, including operator attestation for local files.
+        selection_reason:
+          type: string
+        relevance_score:
+          type: [number, 'null']
+        warnings:
+          type: array
+          items:
+            type: string
+    Scene:
+      type: object
+      required: [scene_id, narration_text, caption_text, start, end, duration, selected_visual_id, visual_options, visual_decision]
+      properties:
+        scene_id:
+          type: string
+        narration_text:
+          type: string
+        caption_text:
+          type: string
+        start:
+          type: number
+        end:
+          type: number
+        duration:
+          type: number
+        selected_visual_id:
+          type: [string, 'null']
+        selected_visual:
+          oneOf:
+            - $ref: '#/components/schemas/Visual'
+            - type: 'null'
+        visual_options:
+          type: array
+          items:
+            $ref: '#/components/schemas/Visual'
+        visual_decision:
+          type: string
+          enum: [suggested, accepted, rejected]
+        generation:
+          type: integer
+    SceneEdit:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        narration_text:
+          type: string
+          minLength: 1
+          maxLength: 2000
+        caption_text:
+          type: string
+          minLength: 1
+          maxLength: 500
+        visual_id:
+          type: [string, 'null']
+        visual_decision:
+          type: string
+          enum: [accepted, rejected]
+    Readiness:
+      type: object
+      required: [status, checks]
+      properties:
+        status:
+          const: ready
+        checks:
+          type: object
+          additionalProperties:
+            type: boolean
+    ErrorResponse:
+      type: object
+      required: [detail]
+      properties:
+        detail:
+          type: object
+          required: [error]
+          properties:
+            error:
+              $ref: '#/components/schemas/JobError'
+    ArtifactError:
+      $ref: '#/components/schemas/ErrorResponse'
+  responses:
+    Conflict:
+      description: Idempotency key was reused for a different request.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    ValidationError:
+      description: Invalid or conflicting input.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    NotFound:
+      description: Job or artifact does not exist or is not ready.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    InternalError:
+      description: Unexpected server error.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
