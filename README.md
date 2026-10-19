@@ -19,14 +19,16 @@ From the project folder:
 py -3.12 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -r requirements-dev.txt
+if (-not (Test-Path .env)) { Copy-Item .env.example .env }
+# Edit .env locally if you want a provider other than the offline mock.
 python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
-Open <http://127.0.0.1:8000>. Paste a script or select one MP3, WAV, or M4A file; choose landscape 16:9, portrait 9:16, or square 1:1; then create a draft. The dashboard shows job status and progress, a storyboard, narration and caption editors, visual choices, preview, and downloads. Save the scene edits and accepted/rejected visual decisions before selecting **Render full video**. That action rebuilds the whole video; there is no partial-scene render or scene cache.
+Open <http://127.0.0.1:8000>. Paste a script or select one MP3, WAV, or M4A file; choose landscape 16:9, portrait 9:16, or square 1:1; then create a storyboard. Inspect candidates inside each scene card; selecting a card only previews it, while **Accept selected** explicitly commits the visual choice. Save edits, then choose **Create draft preview** to render a separate playable full video without accepting pending visuals. Use **Render full video** only after accepting every scene; it creates the final export separately. Both previews rebuild the complete timeline; partial-scene rendering is not implemented.
 
 Each job stores the scenes, candidate visuals, and exports selected when that job was created. Matching-logic changes do not update existing jobs. Create a new job to run the current scene-query and relevance rules. Results without strong scene-specific metadata are marked for human review and are not accepted or rendered automatically; inspect the candidate's actual visual content before accepting it.
 
-Uploaded audio must be non-empty, supported, audible, readable by FFmpeg, no longer than ten minutes, and within the configured byte limit. The upload is not transcribed. Its initial caption says transcription is unavailable. Script mode uses the labelled mock test tone; it is not TTS.
+Uploaded audio must be non-empty, supported, audible, readable by FFmpeg, no longer than ten minutes, and within the configured byte limit. The upload is not transcribed. Its initial caption says transcription is unavailable. Script mode uses the configured TTS provider; the default mock provider produces a labelled test tone, not speech.
 
 ## Docker Compose
 
@@ -39,7 +41,7 @@ docker compose up --build
 
 Compose starts one app service and mounts `./data` for job files. It does not start MinIO or contact an external provider. The default port is 8000; change `PORT` in `.env` if needed. Stop with `Ctrl+C`, or run `docker compose down` in another terminal. The container image includes Debian's FFmpeg package and is substantially larger than the Python service alone.
 
-`.env.example` documents settings. The FastAPI process does not automatically load a `.env` file; for local runs set environment variables in the shell. Docker Compose reads `.env` for interpolation. Defaults include `BROLL_PROVIDER=mock`, `TTS_PROVIDER=mock`, `MAX_FOOTAGE_BYTES=26214400` (25 MiB per video), `MAX_UPLOAD_BYTES=26214400`, `JOB_WORKERS=2`, and `PROVIDER_TIMEOUT_SECONDS=10`. Empty credentials are safe while mock mode is selected.
+`.env.example` documents settings. Local startup loads `.env` from the project root; operating-system environment variables take precedence. Copy `.env.example` to `.env`, add your server-side provider settings there, and restart Uvicorn after changes. Docker Compose also reads `.env` for interpolation. The default footage provider is Wikimedia Commons; set `WIKIMEDIA_CONTACT` to a public URL or email for its API User-Agent. Selecting Commons without that contact does not substitute still images or mock footage: provider status and generation return `BROLL_NOT_CONFIGURED`. `TTS_PROVIDER` defaults to `mock`; selecting ElevenLabs without both credentials returns an actionable `TTS_NOT_CONFIGURED` error.
 
 ### Optional real providers
 
@@ -56,7 +58,22 @@ ELEVENLABS_VOICE_ID=<voice-id-from-your-ElevenLabs-account>
 ELEVENLABS_MODEL_ID=eleven_multilingual_v2
 ```
 
-Then restart with `docker compose up --build`. For local Uvicorn runs, set the same values as PowerShell environment variables before starting the server. The app fails at startup with a setting-specific message if a real provider is selected without its required credentials; it does not silently substitute demo media. Credentials stay on the server and are not returned by `GET /api/v1/providers`.
+For Pexels video footage instead, use:
+
+```dotenv
+BROLL_PROVIDER=pexels
+PEXELS_API_KEY=<your-server-side-Pexels-key>
+```
+
+The storyboard searches each scene with a scene-specific query (for example, `cyclist rides forest trail sunrise` and `quiet lake mist drifts water`), shows Pexels source, contributor, license note, and source-page link for every candidate, and downloads only the accepted candidate when rendering.
+
+Then restart with `docker compose up --build`. For local Uvicorn runs, place the values in the root `.env` file or set them as PowerShell environment variables before starting the server. Credentials stay on the server and are not returned by `GET /api/v1/providers`. If the key or voice ID is missing/invalid, the app reports an actionable configuration/provider error; it does not silently substitute demo media.
+
+### Choose an ElevenLabs voice allowed by your plan
+
+`ELEVENLABS_VOICE_ID` must identify a voice this account is permitted to use through the API. ElevenLabs documents that Voice Library voices are unavailable through the API on the free tier ([Voice Library access rules](https://elevenlabs.io/docs/eleven-creative/voices/voice-library)). For a free-tier account, choose a voice from the account's own/default voices that the account shows as API-available; do not use a community/Voice Library voice. The API's [voice listing](https://elevenlabs.io/docs/api-reference/voices/search) supports `voice_type=non-community` to exclude library copies, but check the account's plan eligibility as well. SceneCraft does not choose or replace a voice automatically.
+
+To change the voice, copy the eligible voice ID from the ElevenLabs account, edit only `ELEVENLABS_VOICE_ID` in the project-root `.env`, save it, and restart the application. For local Uvicorn, stop it with `Ctrl+C` and run the documented startup command again. For Docker Compose, run `docker compose up --build` again. If ElevenLabs reports HTTP 402, SceneCraft shows the provider's sanitized explanation and directs you to check voice eligibility; it does not generate a beep or switch to mock narration.
 
 For local PowerShell, use these commands in the same terminal where Uvicorn will run (replace placeholders locally; do not paste keys into source files or chat):
 
@@ -72,7 +89,7 @@ python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 
 To run Commons footage with demo narration, set `BROLL_PROVIDER=wikimedia` and `WIKIMEDIA_CONTACT`, leaving `TTS_PROVIDER=mock`. To use imported local clips, select `BROLL_PROVIDER=local`; imported rights remain your responsibility. To run natural speech with mock visuals, set the ElevenLabs variables and leave `BROLL_PROVIDER=mock`.
 
-When enabled, Commons receives scene-search text and returns file metadata and provider-ranked candidates; selected video is downloaded into the private job folder. Pexels remains available to existing key holders. ElevenLabs receives each script scene as a separate TTS request. Uploaded audio is not sent to these services. Provider errors do not silently substitute mock output. Source-page URLs, creator metadata, and license information are carried into the storyboard and exports when available. Search order is not represented as an independent relevance score. Review each source page, attribution, license, people, property, trademarks, and sensitive-topic appropriateness before use.
+When enabled, Commons receives scene-search text and returns only supported video files with file-page, creator, and license metadata; selected video is downloaded into the private job folder. Pexels remains available to existing key holders. ElevenLabs receives each script scene as a separate TTS request. Uploaded audio is not sent to these services. Provider errors or empty Commons searches do not silently substitute still images or mock output. Source-page URLs, creator metadata, and license information are carried into the storyboard and exports when available. Search order is not represented as an independent relevance score. Review each source page, attribution, license, people, property, trademarks, and sensitive-topic appropriateness before use.
 
 ## Architecture
 
@@ -91,10 +108,14 @@ The OpenAPI 3.1 contract is in [openapi.yaml](openapi.yaml), served interactivel
 | `GET /api/v1/providers` | Reports active provider names and demo/real mode without exposing credentials. |
 | `POST /api/v1/broll/jobs` | Accepts multipart script or audio and an aspect ratio; returns 202 and a job ID. Supports `Idempotency-Key`. |
 | `GET /api/v1/jobs/{job_id}` | Returns job state, progress, error, results, and scene data. |
+| `GET /api/v1/jobs/{job_id}/voice` / `POST` same path | Reads narration status or creates/reuses narration for the saved script scenes. A generated audio URL is returned when ready. |
+| `GET /api/v1/jobs/{job_id}/voice/audio?signature=...` | Plays the current generated narration WAV; signatures prevent stale audio links from being used after text edits. |
 | `GET /api/v1/jobs/{job_id}/scenes/{scene_id}` | Returns one scene and available visual suggestions. |
 | `PATCH /api/v1/jobs/{job_id}/scenes/{scene_id}` | Edits narration, caption, and selected visual/decision. |
 | `POST /api/v1/jobs/{job_id}/scenes/{scene_id}/regenerate` | Produces fresh mock color-card suggestions for one scene. |
 | `POST /api/v1/jobs/{job_id}/render` | Queues a full render using saved edits; may change aspect ratio. |
+| `POST /api/v1/jobs/{job_id}/draft-preview` / `GET` same path | Queues and polls a separate full draft preview from saved scene choices; pending suggestions remain pending. |
+| `GET /api/v1/jobs/{job_id}/scenes/{scene_id}/visuals/{visual_id}/preview` | Streams a candidate source image or video for inspection without accepting it. |
 | `GET /api/v1/jobs/{job_id}/artifacts/{filename}` | Downloads an allowlisted artifact from that job. |
 
 Errors use `detail.error.code`, `message`, `retryable`, and `details`. Requests accept or receive `X-Correlation-ID`; JSON logs include it and a job ID when one is available. Idempotency, jobs, and editor state exist only in process memory and reset on restart. There is no login or authentication. Keep this development service on a trusted local machine.
@@ -120,6 +141,12 @@ The result JSON records job IDs, statuses, measured end-to-end elapsed seconds, 
 `app/providers.py` defines the swappable footage and speech provider interfaces. Offline mock, Wikimedia Commons, existing-key Pexels, and local-library footage providers are implemented; demo color cards are not licensed stock. The ElevenLabs adapter is available for script TTS. No footage dataset or provider clip is bundled in the repository.
 
 The Commons adapter uses the read-only [MediaWiki Action API](https://commons.wikimedia.org/wiki/Commons:API/MediaWiki), with a descriptive User-Agent containing the configured public contact, bounded requests, HTTPS host/path checks, response media-type checks, download-size caps, and license/creator metadata from each file page. It accepts a limited set of commercial-use license labels, but the labels are uploader-supplied; inspect the linked file page and applicable third-party rights. HTTP 429 responses are surfaced with any `Retry-After` hint and are not immediately retried. The local footage importer stores operator-provided license and attribution declarations and does not verify them. Pexels remains available using its official [video search API](https://www.pexels.com/api/documentation/) and [license](https://www.pexels.com/legal-pages/license), with its existing server-side key requirement and the same bounded download checks. The [ElevenLabs TTS API](https://elevenlabs.io/docs/api-reference/text-to-speech/convert?explorer=true) uses a server-side key, voice ID, and model. No live Commons request, real-video export, or ElevenLabs speech generation has been verified in this workspace. The adapters have offline mocked-HTTP tests. Never put real keys in source control.
+
+For script narration, set `TTS_PROVIDER=elevenlabs`, `ELEVENLABS_API_KEY`, and `ELEVENLABS_VOICE_ID`; `ELEVENLABS_MODEL_ID` defaults to `eleven_multilingual_v2`. These are server environment variables only—never put them in frontend code, source control, logs, or chat. The UI's **Generate narration** action saves current scene edits first, then queues/reuses narration and offers an audio player. Uploaded voice-over remains available and is used as supplied without transcription. In mock mode, the UI identifies the generated 440 Hz tone as DEMO and explicitly says it is not speech.
+
+Generated speech is requested per scene so FFprobe-measured segment durations can set contiguous scene and caption timing. MP3 segments and normalized WAV audio are cached inside the job directory. Cache keys include provider, model, voice, scene text, and scene order; unchanged scene audio can be reused after another scene changes, while changing narration or voice configuration produces a different cache key. Draft and final renders reuse this same generated WAV instead of making another TTS request. Errors, timeouts, rate limits, and invalid audio fail visibly; real provider failures are not replaced with test tones.
+
+No live Commons request, real-video export, or ElevenLabs speech generation has been verified in this workspace. The ElevenLabs adapter and cache behavior have offline mocked tests. Never put real keys in source control.
 
 ## Current verification and limits
 

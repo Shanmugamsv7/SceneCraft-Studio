@@ -9,6 +9,7 @@ Audit date: 2026-10-18. Package versions below were read from the workspace's Py
 | FastAPI | HTTP API and request validation | 0.143.3 | MIT |
 | Uvicorn | ASGI development server | 0.54.0 | BSD-3-Clause |
 | python-multipart | Multipart script/audio uploads | 0.0.32 | Apache-2.0 |
+| python-dotenv | Load the ignored project-root `.env` file for local startup | Declared in `requirements.txt`; not installed or version-verified in this workspace | Not verified here; consult the installed distribution license before redistribution. |
 | Starlette | FastAPI ASGI foundation | 1.8.0 | BSD-3-Clause |
 | Pydantic | Request models and validation | 2.14.1 | MIT |
 | pydantic-core | Pydantic validation implementation | 2.50.1 | MIT |

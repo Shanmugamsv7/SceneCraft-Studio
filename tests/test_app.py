@@ -46,15 +46,22 @@ def test_editing_workspace_and_assets_are_served() -> None:
     markup = page.text
     for control in ("script", "audio", "scene-list", "preview-video", "render-button", "export video"):
         assert control in markup.lower()
+    assert 'id="draft-preview-button"' in markup
+    assert 'id="preview-mode-bar"' in markup
     assert client.get("/static/styles.css").status_code == 200
     script = client.get("/static/app.js")
     assert script.status_code == 200
     assert "/api/v1/jobs/${currentJobId}/scenes/${scene.scene_id}" in script.text
+    assert 'status.mode === "demo_test_tone"' in script.text
+    assert "narration ready" in script.text
     assert 'api("/api/v1/providers")' in script.text
     assert "const baseUrl = new URL(result.video, window.location.href);" in script.text
     assert "video.src = nextVideoUrl" in script.text
     assert "_sc_export" in script.text
     assert 'id="preview-load-error"' in markup
+    styles = client.get("/static/styles.css").text
+    assert "[hidden]{display:none!important}" in styles
+    assert ".preview-empty{aspect-ratio:auto;min-height:86px;padding:14px}" in styles
     assert "addEventListener(\"loadeddata\"" in script.text
     assert "addEventListener(\"error\"" in script.text
     assert "const saved = await saveEdits();" in script.text
@@ -63,9 +70,13 @@ def test_editing_workspace_and_assets_are_served() -> None:
     assert "Searching alternatives…" in script.text
     assert "No new eligible alternatives were found." in script.text
     assert "Alternative search failed" in script.text
-    assert "setCaptionTrack(captions)" in script.text
+    assert "setCaptionTrack(captions, expectedVideoUrl)" in script.text
     assert '<track id="caption-track"' in markup
     assert markup.count("<video ") == 1
+    assert "find-alternatives-button[data-scene-id]" in script.text
+    assert 'regenerate.dataset.sceneId = scene.scene_id' in script.text
+    assert "button.disabled = !scene || searching || working" in script.text
+    assert "SceneCraftPreview.selectMainPreview" in script.text
     assert "Rendered video" in markup
     assert 'id="source-preview-image"' in markup
     assert '"SOURCE IMAGE PREVIEW - NOT THE RENDERED VIDEO"' in script.text
@@ -75,6 +86,10 @@ def test_editing_workspace_and_assets_are_served() -> None:
     assert 'src="/static/preview-state.js"' in markup
     assert "Accept selected ${selectedForAccept?.media_type === \"image\" ? \"image\" : \"video\"}" in script.text
     assert 'href="/api/v1/docs"' not in markup
+    assert "/api/v1/jobs/${currentJobId}/draft-preview" in script.text
+    assert 'id="download-all-captions"' in markup
+    assert "/captions.srt" in script.text
+    assert "/visuals/${encodeURIComponent(previewVisual.id)}/preview" in script.text
 
 
 def test_job_creation_status_and_artifacts(tmp_path, monkeypatch) -> None:
@@ -475,13 +490,46 @@ def test_preview_state_switches_from_source_to_export_and_marks_stale_edits() ->
         pytest.skip("Node.js is needed to exercise the browser preview-state helper")
     script = r'''const assert = require("assert");
 const { resolvePreviewState } = require("./app/static/preview-state.js");
+const { selectMainPreview, selectCaptionResult } = require("./app/static/preview-state.js");
 const scenes = [{scene_id:"scene-1", visual_options:[{id:"image-1", media_type:"image", source:"phone photo", thumbnail_url:"/phone.jpg"}], selected_visual_id:"image-1", visual_decision:"accepted"}];
 assert.equal(resolvePreviewState({scenes}).kind, "source");
 assert.equal(resolvePreviewState({scenes}).visual.media_type, "image");
 assert.equal(resolvePreviewState({scenes, result:{video:"/job/video_16-9.mp4"}}).kind, "rendered");
 assert.equal(resolvePreviewState({scenes, result:{video:"/job/video_16-9.mp4"}, stale:true}).kind, "stale");
+const draft = {video:"/job/draft.mp4"};
+const final = {video:"/job/final.mp4"};
+assert.equal(selectMainPreview({draftResult:draft, finalResult:final, activeView:"draft"}).result, draft);
+assert.equal(selectMainPreview({draftResult:draft, finalResult:final, activeView:"final"}).result, final);
+assert.equal(selectMainPreview({draftResult:null, finalResult:final, activeView:"draft"}).result, final);
+assert.equal(selectMainPreview({draftResult:null, finalResult:null, activeView:"draft"}).result, null);
+assert.equal(selectMainPreview({draftResult:null, finalResult:null, activeView:"draft"}).kind, null);
+const olderDraft = {video:"/job/draft-old.mp4", captions:"/job/draft-old.srt"};
+const refreshedDraft = {video:"/job/draft-new.mp4", captions:"/job/draft-new.srt"};
+assert.equal(selectCaptionResult({draftResult:refreshedDraft, finalResult:final, activeView:"draft"}), refreshedDraft);
+assert.equal(selectCaptionResult({draftResult:olderDraft, finalResult:final, activeView:"final"}), final);
 '''
     subprocess.run([node, "-e", script], check=True, capture_output=True, text=True)
+
+
+def test_refreshed_draft_caption_track_replaces_old_cues() -> None:
+    script = (Path(__file__).resolve().parent.parent / "app" / "static" / "app.js").read_text(encoding="utf-8")
+    assert "function previewCaptionResult(job)" in script
+    assert "selectCaptionResult({ draftResult, finalResult, activeView: activePreviewView })" in script
+    assert "function clearCaptionTracks()" in script
+    assert 'Array.from(video.textTracks).forEach((textTrack) => { textTrack.mode = "disabled"; });' in script
+    assert 'video.querySelectorAll("track").forEach((track) => track.remove());' in script
+    assert "clearCaptionTracks();" in script
+    assert 'track.addEventListener("load", () => {' in script
+    assert 'track.track.mode = "showing";' in script
+    assert 'track.track.mode = "hidden";' in script
+    assert "const playbackTime = video.currentTime;" in script
+    assert "video.currentTime = playbackTime;" in script
+    assert "video.dataset.exportUrl !== expectedVideoUrl" in script
+    assert "!track.isConnected" in script
+    assert "video.load();" not in script[script.index("function setCaptionTrack"):script.index("async function loadCaptionsForPreview")]
+    assert "await loadCaptionsForPreview(previewCaptionResult(job));" in script
+    assert "if (requestId !== captionRequestId) return;" in script
+    assert "captionRequestId += 1;" in script[script.index("function clearCaptionTracks"):script.index("function setCaptionTrack")]
 
 
 def test_local_matching_does_not_select_a_scientist_interview_for_phone_scene(tmp_path) -> None:
@@ -509,6 +557,105 @@ def test_caption_chunks_wrap_long_text_without_losing_words() -> None:
     assert all(len(line) <= 42 for cue in chunks for line in cue.splitlines())
     assert all(1 <= len(cue.splitlines()) <= 2 for cue in chunks)
     assert " ".join(" ".join(chunks).split()) == text
+
+
+def test_burn_captions_uses_libass_filter_and_keeps_audio(tmp_path, monkeypatch) -> None:
+    source = tmp_path / "muxed.mp4"
+    captions = tmp_path / "captions.srt"
+    output = tmp_path / "video.mp4"
+    source.write_bytes(b"source")
+    captions.write_text("1\n00:00:00,000 --> 00:00:01,000\nCurrent final caption.\n", encoding="utf-8")
+    commands = []
+
+    def fake_run(command, **kwargs):
+        commands.append((command, kwargs))
+        return subprocess.CompletedProcess(command, 0, stdout=" .. subtitles         V->V       Render text subtitles onto input video using the libass library.\n", stderr="")
+
+    monkeypatch.setattr(main, "_run", fake_run)
+    main._burn_captions_into_video("ffmpeg", source, captions, output, 1080)
+
+    command, kwargs = commands[-1]
+    assert "-vf" in command
+    assert "subtitles=filename='captions.srt':charenc=UTF-8" in command[command.index("-vf") + 1]
+    assert "Alignment=2" in command[command.index("-vf") + 1]
+    assert command[command.index("-map") + 1] == "0:v:0"
+    assert "0:a:0" in command
+    assert command[command.index("-c:a") + 1] == "copy"
+    assert kwargs["cwd"] == tmp_path
+
+
+def test_burn_captions_explains_missing_subtitles_filter(tmp_path, monkeypatch) -> None:
+    captions = tmp_path / "captions.srt"
+    captions.write_text("1\n00:00:00,000 --> 00:00:01,000\nCaption\n", encoding="utf-8")
+    monkeypatch.setattr(main, "_ffmpeg_supports_subtitles", lambda _ffmpeg: False)
+    with pytest.raises(RuntimeError, match="enable-libass"):
+        main._burn_captions_into_video("ffmpeg", tmp_path / "muxed.mp4", captions, tmp_path / "video.mp4", 720)
+
+
+def test_merged_scene_captions_srt_uses_absolute_times_and_current_text() -> None:
+    from app.main import _merged_scene_captions_srt
+
+    captions = _merged_scene_captions_srt([
+        {"start": 5.25, "end": 7.0, "caption_text": "Repeated sentence."},
+        {"start": 0.0, "end": 2.5, "caption_text": "First line has enough words to wrap cleanly onto another caption line."},
+        {"start": 7.0, "end": 8.75, "caption_text": "Repeated sentence."},
+        {"start": 2.5, "end": 5.25, "caption_text": "Latest saved caption."},
+    ])
+
+    blocks = captions.strip().split("\n\n")
+    assert [block.splitlines()[0] for block in blocks] == ["1", "2", "3", "4"]
+    assert blocks[0].splitlines()[1] == "00:00:00,000 --> 00:00:02,500"
+    assert len(blocks[0].splitlines()) == 4
+    assert " ".join(blocks[0].splitlines()[2:]) == "First line has enough words to wrap cleanly onto another caption line."
+    assert blocks[1].splitlines()[1] == "00:00:02,500 --> 00:00:05,250"
+    assert "Latest saved caption." in blocks[1]
+    assert captions.count("Repeated sentence.") == 2
+    assert "00:00:05,250 --> 00:00:07,000" in blocks[2]
+    assert "00:00:07,000 --> 00:00:08,750" in blocks[3]
+
+
+def test_merged_scene_captions_srt_skips_only_exact_duplicate_cues_and_empty_captions() -> None:
+    from app.main import _merged_scene_captions_srt
+
+    assert _merged_scene_captions_srt([]) == ""
+    assert _merged_scene_captions_srt([{"start": 0, "end": 1, "caption_text": "   "}]) == ""
+    captions = _merged_scene_captions_srt([
+        {"start": 0, "end": 1, "caption_text": "Same cue."},
+        {"start": 0, "end": 1, "caption_text": "Same cue."},
+        {"start": 1, "end": 2, "caption_text": "Same cue."},
+    ])
+    assert captions.count("Same cue.") == 2
+    assert [block.splitlines()[0] for block in captions.strip().split("\n\n")] == ["1", "2"]
+
+
+def test_current_scene_caption_download_uses_saved_edit_not_previous_artifact(tmp_path, monkeypatch) -> None:
+    job = _new_draft(tmp_path, monkeypatch, script="Original caption text.")
+    scene = job["scenes"][0]
+    updated = client.patch(
+        f"/api/v1/jobs/{job['job_id']}/scenes/{scene['scene_id']}",
+        json={"caption_text": "Latest saved caption text."},
+    )
+    assert updated.status_code == 200
+
+    response = client.get(f"/api/v1/jobs/{job['job_id']}/captions.srt")
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("application/x-subrip")
+    assert 'filename="scenecraft-captions.srt"' in response.headers["content-disposition"]
+    assert "Latest saved caption text." in response.text
+    assert "Original caption text." not in response.text
+
+
+def test_current_scene_caption_download_reports_when_no_captions_exist() -> None:
+    job_id = str(uuid.uuid4())
+    with main.jobs_lock:
+        main.jobs[job_id] = {"job_id": job_id, "status": "succeeded", "scenes": []}
+    try:
+        response = client.get(f"/api/v1/jobs/{job_id}/captions.srt")
+        assert response.status_code == 404
+        assert response.json()["detail"]["error"]["code"] == "CAPTIONS_UNAVAILABLE"
+    finally:
+        with main.jobs_lock:
+            main.jobs.pop(job_id, None)
 
 
 def test_wikimedia_image_options_preserve_creator_license_and_review_weak_matches(tmp_path) -> None:
@@ -1103,19 +1250,133 @@ def test_configuration_rejects_invalid_values() -> None:
 def test_real_provider_configuration_requires_server_credentials() -> None:
     from app.config import load_settings
 
-    with pytest.raises(ValueError, match="PEXELS_API_KEY"):
-        load_settings({"BROLL_PROVIDER": "pexels"})
-    with pytest.raises(ValueError, match="ELEVENLABS_API_KEY.*ELEVENLABS_VOICE_ID"):
-        load_settings({"TTS_PROVIDER": "elevenlabs"})
+    incomplete_pexels = load_settings({"BROLL_PROVIDER": "pexels"})
+    assert incomplete_pexels.provider == "pexels"
+    assert incomplete_pexels.pexels_api_key is None
+    incomplete_tts = load_settings({"TTS_PROVIDER": "elevenlabs"})
+    assert incomplete_tts.speech_provider == "elevenlabs"
+    assert incomplete_tts.elevenlabs_api_key is None
+    assert incomplete_tts.elevenlabs_voice_id is None
+    with pytest.raises(ValueError, match="ELEVENLABS_MODEL_ID"):
+        load_settings({"ELEVENLABS_MODEL_ID": "   "})
     settings = load_settings({"BROLL_PROVIDER": "pexels", "PEXELS_API_KEY": "test-key", "TTS_PROVIDER": "elevenlabs", "ELEVENLABS_API_KEY": "test-key", "ELEVENLABS_VOICE_ID": "test-voice"})
     assert settings.provider == "pexels"
     assert settings.speech_provider == "elevenlabs"
-    with pytest.raises(ValueError, match="WIKIMEDIA_CONTACT"):
-        load_settings({"BROLL_PROVIDER": "wikimedia"})
+    incomplete_commons = load_settings({"BROLL_PROVIDER": "wikimedia"})
+    assert incomplete_commons.provider == "wikimedia"
+    assert incomplete_commons.wikimedia_contact is None
     commons = load_settings({"BROLL_PROVIDER": "wikimedia", "WIKIMEDIA_CONTACT": "https://example.org/contact"})
     assert commons.provider == "wikimedia"
     local = load_settings({"BROLL_PROVIDER": "local"})
     assert local.provider == "local"
+
+
+def test_selected_pexels_without_key_returns_actionable_error_instead_of_mock_media() -> None:
+    from app.providers import ProviderError, UnconfiguredFootageProvider
+
+    provider = UnconfiguredFootageProvider(
+        "pexels-unconfigured", "videos-api-v1", "PEXELS_API_KEY is missing."
+    )
+    with pytest.raises(ProviderError) as error:
+        provider.visual_options_for_ratio("A cyclist rides a forest trail at sunrise.", 0, "job-1", 0, "16:9", set())
+    assert error.value.code == "BROLL_NOT_CONFIGURED"
+    assert error.value.retryable is False
+    assert "PEXELS_API_KEY" in str(error.value)
+
+
+def test_project_dotenv_selects_elevenlabs_without_overriding_process_environment(tmp_path, monkeypatch):
+    from app import config
+
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "TTS_PROVIDER=elevenlabs\n"
+        "ELEVENLABS_API_KEY=test-only-not-a-real-key\n"
+        "ELEVENLABS_VOICE_ID=test-only-voice\n"
+        "ELEVENLABS_MODEL_ID=eleven_multilingual_v2\n",
+        encoding="utf-8",
+    )
+    monkeypatch.delenv("SCENECRAFT_DISABLE_DOTENV", raising=False)
+    monkeypatch.delenv("TTS_PROVIDER", raising=False)
+    monkeypatch.delenv("ELEVENLABS_API_KEY", raising=False)
+    monkeypatch.delenv("ELEVENLABS_VOICE_ID", raising=False)
+    monkeypatch.delenv("ELEVENLABS_MODEL_ID", raising=False)
+    monkeypatch.setattr(config, "PROJECT_ENV_FILE", env_file)
+
+    assert config.load_project_environment()
+    settings = config.load_settings()
+    provider = main._create_speech_provider(settings)
+    assert settings.speech_provider == "elevenlabs"
+    assert isinstance(provider, main.ElevenLabsSpeechProvider)
+    assert provider._model_id == "eleven_multilingual_v2"
+    assert provider._voice_id == "test-only-voice"
+
+    monkeypatch.setenv("TTS_PROVIDER", "mock")
+    config.load_project_environment()
+    assert config.load_settings().speech_provider == "mock"
+
+
+def test_elevenlabs_status_does_not_reuse_a_mock_voice_cache(tmp_path, monkeypatch):
+    from app.config import load_settings
+
+    monkeypatch.setattr(main, "DATA_DIR", tmp_path)
+    job_id = "provider-switch-cache-test"
+    (tmp_path / job_id).mkdir()
+    scene_texts = ["A saved narration scene."]
+    monkeypatch.setattr(main, "settings", load_settings({"TTS_PROVIDER": "mock"}))
+    monkeypatch.setattr(main, "SPEECH_PROVIDER", None)
+    _, demo_signature = main._voice_cache_paths(job_id, scene_texts)
+    job = {
+        "voice_input_type": "script",
+        "scenes": [{"narration_text": scene_texts[0]}],
+        "voice_generation": {"status": "ready", "signature": demo_signature, "provider": "mock_sine_test_tone", "mode": "demo_test_tone"},
+    }
+
+    class ElevenLabsFixture:
+        name = "elevenlabs"
+        version = "fixture"
+        _model_id = "eleven_multilingual_v2"
+        _voice_id = "fixture-voice"
+
+    monkeypatch.setattr(main, "settings", load_settings({"TTS_PROVIDER": "elevenlabs", "ELEVENLABS_API_KEY": "test-only-key", "ELEVENLABS_VOICE_ID": "fixture-voice"}))
+    monkeypatch.setattr(main, "SPEECH_PROVIDER", ElevenLabsFixture())
+    _, live_signature = main._voice_cache_paths(job_id, scene_texts)
+    assert live_signature != demo_signature
+    status = main._voice_status(job_id, job)
+    assert status["status"] == "stale"
+
+
+def test_elevenlabs_provider_failure_never_falls_back_to_demo_tone(tmp_path, monkeypatch):
+    from app.config import load_settings
+    from app.providers import ProviderError
+
+    monkeypatch.setattr(main, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(main, "settings", load_settings({
+        "TTS_PROVIDER": "elevenlabs",
+        "ELEVENLABS_API_KEY": "test-only-key",
+        "ELEVENLABS_VOICE_ID": "fixture-voice",
+    }))
+
+    class FailingElevenLabsFixture:
+        name = "elevenlabs"
+        version = "test"
+        _model_id = "eleven_multilingual_v2"
+        _voice_id = "fixture-voice"
+
+        def __init__(self):
+            self.calls = 0
+
+        def synthesize(self, text, destination):
+            self.calls += 1
+            raise ProviderError("PROVIDER_AUTH_FAILED", "Mocked authentication rejection.", retryable=False)
+
+    speech = FailingElevenLabsFixture()
+    monkeypatch.setattr(main, "SPEECH_PROVIDER", speech)
+    response = client.post("/api/v1/broll/jobs", data={"script": "This job must not fall back to a test tone."})
+    job = wait_for_job(response.json()["job_id"])
+    assert job["status"] == "failed"
+    assert job["error"]["code"] == "PROVIDER_AUTH_FAILED"
+    assert speech.calls == 1
+    assert job["result"] is None
 
 
 def test_wikimedia_commons_provider_searches_scene_phrase_and_keeps_license_provenance(tmp_path, monkeypatch):
@@ -1153,6 +1414,60 @@ def test_wikimedia_commons_provider_searches_scene_phrase_and_keeps_license_prov
     assert options[0].source_url.startswith("https://commons.wikimedia.org/wiki/File:")
     assert options[0].ai_generated is None
     assert options[0].relevance_score == 1.0
+
+
+def test_wikimedia_commons_accepts_video_ogv_reported_as_application_ogg(tmp_path, monkeypatch):
+    from app import providers
+
+    payload = {"query": {"pages": [{"pageid": 124, "title": "File:Misty lake.ogv", "imageinfo": [{
+        "url": "https://upload.wikimedia.org/wikipedia/commons/a/a1/Misty_lake.ogv",
+        "size": 4096, "mime": "application/ogg", "mediatype": "VIDEO",
+        "extmetadata": {"LicenseShortName": {"value": "CC BY 4.0"}, "LicenseUrl": {"value": "https://creativecommons.org/licenses/by/4.0/"}, "Artist": {"value": "Lake Creator"}},
+    }]}]}}
+
+    class FakeResponse(io.BytesIO):
+        def __enter__(self): return self
+        def __exit__(self, *args): self.close()
+        def geturl(self): return "https://commons.wikimedia.org/w/api.php"
+
+    monkeypatch.setattr(providers, "urlopen", lambda *args, **kwargs: FakeResponse(json.dumps(payload).encode()))
+    options = providers.WikimediaCommonsFootageProvider(tmp_path, "contact@example.org").visual_options("Mist drifts over a quiet lake.", 0, "job-1")
+    assert len(options) == 1
+    assert options[0].media_type == "video"
+    assert options[0].download_url.endswith(".ogv")
+    assert options[0].attribution == "Lake Creator"
+
+
+def test_wikimedia_commons_rejects_application_ogg_without_video_mediatype(tmp_path, monkeypatch):
+    from app import providers
+
+    payload = {"query": {"pages": [{"pageid": 125, "title": "File:Lake audio.ogv", "imageinfo": [{
+        "url": "https://upload.wikimedia.org/wikipedia/commons/a/a1/Lake_audio.ogv",
+        "size": 4096, "mime": "application/ogg", "mediatype": "AUDIO",
+        "extmetadata": {"LicenseShortName": {"value": "CC BY 4.0"}, "LicenseUrl": {"value": "https://creativecommons.org/licenses/by/4.0/"}, "Artist": {"value": "Audio Creator"}},
+    }]}]}}
+
+    class FakeResponse(io.BytesIO):
+        def __enter__(self): return self
+        def __exit__(self, *args): self.close()
+        def geturl(self): return "https://commons.wikimedia.org/w/api.php"
+
+    monkeypatch.setattr(providers, "urlopen", lambda *args, **kwargs: FakeResponse(json.dumps(payload).encode()))
+    provider = providers.WikimediaCommonsFootageProvider(tmp_path, "contact@example.org")
+    with pytest.raises(providers.ProviderError, match="no video candidates") as error:
+        provider.visual_options("Mist drifts over a quiet lake.", 0, "job-1")
+    assert error.value.details["rejected_candidates"]["not_video_or_too_large"] >= 1
+
+
+def test_scene_search_phrases_add_commons_friendly_outdoor_fallbacks():
+    from app.pipeline import scene_search_phrases
+
+    cyclist = scene_search_phrases("A cyclist rides along a forest trail at sunrise.", limit=8)
+    lake = scene_search_phrases("Mist drifts across a quiet lake at sunrise.", limit=8)
+    assert "cyclist forest trail" in cyclist
+    assert "cycling trail" in cyclist
+    assert "misty lake" in lake
+    assert "lake sunrise" in lake
 
 
 def test_wikimedia_commons_tries_bounded_alternative_phrases_after_empty_results(monkeypatch):
@@ -1250,6 +1565,7 @@ def test_wikimedia_commons_rejects_missing_or_incomplete_license_and_creator_met
     with pytest.raises(providers.ProviderError) as error:
         adapter.visual_options("River kayak", 0, "job-1")
     assert error.value.code == "PROVIDER_NO_MEDIA"
+    assert error.value.details["rejected_candidates"]
 
 
 def test_wikimedia_commons_download_failure_is_retryable_with_server_delay(tmp_path, monkeypatch):
@@ -1649,6 +1965,318 @@ def test_elevenlabs_adapter_posts_text_server_side_and_validates_audio(tmp_path,
     assert metadata["provider_character_cost"] == "15"
 
 
+def test_elevenlabs_409_exposes_only_sanitized_provider_diagnostics(monkeypatch, tmp_path):
+    from urllib.error import HTTPError
+    from app import providers
+
+    private_key = "private-test-key"
+    response_body = json.dumps({"detail": {
+        "type": "conflict",
+        "code": "concurrent_modification",
+        "message": f"Request conflict; xi-api-key={private_key}",
+        "request_id": "safe-request-id-123",
+    }}).encode()
+
+    def fake_urlopen(request, timeout):
+        raise HTTPError(request.full_url, 409, "Conflict", {}, io.BytesIO(response_body))
+
+    monkeypatch.setattr(providers, "urlopen", fake_urlopen)
+    adapter = providers.ElevenLabsSpeechProvider(private_key, "voice-test")
+    with pytest.raises(providers.ProviderError) as captured:
+        adapter.synthesize("Test request.", tmp_path / "voice.mp3")
+
+    error = captured.value
+    assert error.code == "PROVIDER_CONFLICT"
+    assert error.retryable is False
+    assert error.details == {
+        "status_code": 409,
+        "provider_error_code": "concurrent_modification",
+        "provider_error_type": "conflict",
+        "provider_request_id": "safe-request-id-123",
+    }
+    assert "Request conflict" in str(error)
+    assert "[redacted]" in str(error)
+    assert private_key not in str(error)
+    assert private_key not in repr(error.details)
+
+
+def test_elevenlabs_free_tier_library_voice_402_has_actionable_error(monkeypatch, tmp_path):
+    from urllib.error import HTTPError
+    from app import providers
+
+    response_body = json.dumps({"detail": {
+        "type": "payment_required",
+        "code": "voice_not_available_for_plan",
+        "message": "Free users cannot use library voices via the API.",
+    }}).encode()
+
+    def fake_urlopen(request, timeout):
+        raise HTTPError(request.full_url, 402, "Payment Required", {}, io.BytesIO(response_body))
+
+    monkeypatch.setattr(providers, "urlopen", fake_urlopen)
+    adapter = providers.ElevenLabsSpeechProvider("private-test-key", "configured-voice")
+    with pytest.raises(providers.ProviderError) as captured:
+        adapter.synthesize("Test narration.", tmp_path / "voice.mp3")
+
+    error = captured.value
+    assert error.code == "PROVIDER_VOICE_PLAN_RESTRICTED"
+    assert error.retryable is False
+    assert error.details["status_code"] == 402
+    assert error.details["provider_error_code"] == "voice_not_available_for_plan"
+    assert "Free users cannot use library voices via the API" in str(error)
+    assert "ELEVENLABS_VOICE_ID" in str(error)
+    assert "restart SceneCraft Studio" in str(error)
+    assert "private-test-key" not in str(error)
+    assert "configured-voice" not in str(error)
+
+
+def test_elevenlabs_409_failure_reaches_voice_status_and_safe_log(tmp_path, monkeypatch, caplog):
+    from app import providers
+
+    job = _new_draft(tmp_path, monkeypatch, script="A short narration for conflict reporting.")
+    texts = [scene["narration_text"] for scene in main.jobs[job["job_id"]]["scenes"]]
+    signature = main._voice_cache_paths(job["job_id"], texts)[1]
+    provider_error = providers.ProviderError(
+        "PROVIDER_CONFLICT",
+        "ElevenLabs speech request failed with HTTP 409: Voice is unavailable for this request.",
+        retryable=False,
+        details={"status_code": 409, "provider_error_code": "voice_access_denied"},
+    )
+
+    class Provider:
+        name = "elevenlabs"
+
+    monkeypatch.setattr(main.logger, "propagate", True)
+    monkeypatch.setattr(main, "SPEECH_PROVIDER", Provider())
+    monkeypatch.setattr(main, "_prepare_speech_audio", lambda *args, **kwargs: (_ for _ in ()).throw(provider_error))
+    main._generate_voice_task(job["job_id"], signature)
+
+    response = client.get(f"/api/v1/jobs/{job['job_id']}/voice")
+    assert response.status_code == 200
+    status = response.json()
+    assert status["status"] == "failed"
+    assert status["error"]["code"] == "PROVIDER_CONFLICT"
+    assert "HTTP 409" in status["error"]["message"]
+    assert status["error"]["details"]["provider_error_code"] == "voice_access_denied"
+    assert "speech provider request failed" in caplog.text
+    assert "voice_access_denied" in caplog.text
+    assert "private-test-key" not in caplog.text
+
+
+@pytest.mark.parametrize("failure", ["timeout", "rate_limit", "invalid_audio"])
+def test_elevenlabs_adapter_reports_bounded_provider_failures(failure, monkeypatch, tmp_path):
+    from urllib.error import HTTPError
+    from app import providers
+
+    def fake_urlopen(request, timeout):
+        if failure == "timeout":
+            raise TimeoutError("provider timeout")
+        if failure == "rate_limit":
+            raise HTTPError(request.full_url, 429, "slow down", {}, None)
+        return io.BytesIO(b"not audio")
+
+    monkeypatch.setattr(providers, "urlopen", fake_urlopen)
+    adapter = providers.ElevenLabsSpeechProvider("private-test-key", "voice-test", timeout=0.1)
+    with pytest.raises(providers.ProviderError) as error:
+        adapter.synthesize("Test narration.", tmp_path / "invalid.mp3")
+    if failure == "timeout":
+        assert error.value.code == "PROVIDER_UNAVAILABLE"
+        assert error.value.retryable is True
+    elif failure == "rate_limit":
+        assert error.value.code == "PROVIDER_RATE_LIMITED"
+        assert error.value.retryable is True
+        assert error.value.details["status_code"] == 429
+    else:
+        assert error.value.code == "PROVIDER_INVALID_RESULT"
+        assert error.value.retryable is False
+
+
+def test_voice_generation_requires_credentials_and_returns_actionable_error(tmp_path, monkeypatch):
+    from dataclasses import replace
+    from app.config import load_settings
+
+    job = _new_draft(tmp_path, monkeypatch, script="A script job needs voice configuration.")
+    monkeypatch.setattr(main, "SPEECH_PROVIDER", None)
+    monkeypatch.setattr(main, "settings", load_settings({"TTS_PROVIDER": "elevenlabs"}))
+    response = client.post(f"/api/v1/jobs/{job['job_id']}/voice")
+    assert response.status_code == 503
+    error = response.json()["detail"]["error"]
+    assert error["code"] == "TTS_NOT_CONFIGURED"
+    assert error["retryable"] is False
+    assert error["details"]["required_environment"] == ["ELEVENLABS_API_KEY", "ELEVENLABS_VOICE_ID"]
+    assert "ELEVENLABS_API_KEY" in error["message"] and "ELEVENLABS_VOICE_ID" in error["message"]
+    assert "private-test-key" not in response.text
+    provider_info = client.get("/api/v1/providers")
+    assert provider_info.status_code == 200
+    assert provider_info.json()["speech_configured"] is False
+    assert provider_info.json()["mode"] == "unconfigured"
+    assert "private-test-key" not in provider_info.text
+
+
+def test_speech_segment_cache_is_scoped_to_provider_voice_and_model(tmp_path, monkeypatch):
+    monkeypatch.setattr(main, "DATA_DIR", tmp_path)
+    job_id = "voice-cache-provider-scope"
+    (tmp_path / job_id).mkdir()
+    scratch = tmp_path / job_id / ".voice-rendering"
+    scratch.mkdir()
+
+    class FixtureSpeechProvider:
+        name = "fixture-speech"
+        version = "1"
+
+        def __init__(self, voice_id, model_id):
+            self._voice_id = voice_id
+            self._model_id = model_id
+            self.calls = 0
+
+        def synthesize(self, text, destination):
+            self.calls += 1
+            main._run([main._ffmpeg_path(), "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "sine=frequency=760:duration=0.4", "-c:a", "libmp3lame", str(destination)])
+            return {"provider": self.name, "model": self._model_id, "voice_id": self._voice_id}
+
+    first_voice = FixtureSpeechProvider("voice-a", "model-a")
+    monkeypatch.setattr(main, "SPEECH_PROVIDER", first_voice)
+    main._prepare_speech_audio(job_id, ["Same unchanged scene text."], scratch)
+    main._prepare_speech_audio(job_id, ["Same unchanged scene text."], scratch)
+    assert first_voice.calls == 1
+
+    second_voice = FixtureSpeechProvider("voice-b", "model-a")
+    monkeypatch.setattr(main, "SPEECH_PROVIDER", second_voice)
+    main._prepare_speech_audio(job_id, ["Same unchanged scene text."], scratch)
+    assert second_voice.calls == 1
+
+    third_model = FixtureSpeechProvider("voice-b", "model-b")
+    monkeypatch.setattr(main, "SPEECH_PROVIDER", third_model)
+    main._prepare_speech_audio(job_id, ["Same unchanged scene text."], scratch)
+    assert third_model.calls == 1
+
+
+def test_voice_generation_does_not_apply_old_timing_after_narration_edit(tmp_path, monkeypatch):
+    import threading
+
+    monkeypatch.setattr(main, "DATA_DIR", tmp_path)
+    job = _new_draft(tmp_path, monkeypatch, script="Keep this timing until fresh narration is ready.")
+    scene = job["scenes"][0]
+    initial_timing = (scene["start"], scene["end"])
+    started = threading.Event()
+    release = threading.Event()
+    finished = threading.Event()
+
+    class SlowSpeechProvider:
+        name = "slow-fixture-speech"
+        version = "test"
+        _model_id = "fixture-model"
+        _voice_id = "fixture-voice"
+
+        def synthesize(self, text, destination):
+            started.set()
+            assert release.wait(3)
+            main._run([main._ffmpeg_path(), "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "sine=frequency=760:duration=1.4", "-c:a", "libmp3lame", str(destination)])
+            finished.set()
+            return {"provider": self.name, "model": self._model_id, "voice_id": self._voice_id}
+
+    monkeypatch.setattr(main, "SPEECH_PROVIDER", SlowSpeechProvider())
+    queued = client.post(f"/api/v1/jobs/{job['job_id']}/voice")
+    assert queued.status_code == 202
+    assert started.wait(3)
+    changed = client.patch(f"/api/v1/jobs/{job['job_id']}/scenes/{scene['scene_id']}", json={"narration_text": "New text with its own voice timing."})
+    assert changed.status_code == 200
+    release.set()
+    assert finished.wait(5)
+    deadline = time.monotonic() + 5
+    task_finished = False
+    while time.monotonic() < deadline:
+        voice_state = main.jobs[job["job_id"]].get("voice_generation", {})
+        if voice_state.get("status") == "ready" or "while voice generation was running" in voice_state.get("message", ""):
+            task_finished = True
+            break
+        time.sleep(0.05)
+    assert task_finished, "voice task did not finish after the provider response"
+    status = client.get(f"/api/v1/jobs/{job['job_id']}/voice").json()
+    latest_scene = client.get(f"/api/v1/jobs/{job['job_id']}/scenes/{scene['scene_id']}").json()
+    assert (latest_scene["start"], latest_scene["end"]) == initial_timing
+    assert status["status"] == "stale"
+
+
+def test_voice_audio_is_cached_across_draft_and_final_renders(tmp_path, monkeypatch):
+    monkeypatch.setattr(main, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(main, "FOOTAGE_PROVIDER", main.MOCK_PROVIDER)
+
+    class FixtureSpeechProvider:
+        name = "fixture-speech-provider"
+        version = "test-only"
+        _model_id = "fixture-model"
+        _voice_id = "fixture-voice"
+
+        def __init__(self):
+            self.calls = []
+
+        def synthesize(self, text, destination):
+            self.calls.append(text)
+            main._run([main._ffmpeg_path(), "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", f"sine=frequency=760:duration={0.55 if text.startswith('First') else 0.85}", "-c:a", "libmp3lame", str(destination)])
+            return {"provider": self.name, "model": self._model_id, "voice_id": self._voice_id, "provider_character_cost": None}
+
+    speech = FixtureSpeechProvider()
+    monkeypatch.setattr(main, "SPEECH_PROVIDER", speech)
+    created = client.post("/api/v1/broll/jobs", data={"script": "First scene. Second scene follows.", "aspect_ratio": "16:9"})
+    assert created.status_code == 202
+    job = wait_for_job(created.json()["job_id"])
+    assert job["status"] == "succeeded", job["error"]
+    assert speech.calls == ["First scene.", "Second scene follows."]
+
+    voice = client.get(f"/api/v1/jobs/{job['job_id']}/voice").json()
+    assert voice["status"] == "ready"
+    assert voice["provider"] == speech.name
+    assert voice["mode"] == "generated_speech"
+    assert voice["voice_id"] == "fixture-voice"
+    audio_response = client.get(voice["audio_url"])
+    assert audio_response.status_code == 200
+    assert audio_response.headers["content-type"].startswith("audio/wav")
+    assert audio_response.content[:4] == b"RIFF"
+    assert client.get(voice["audio_url"].split("signature=")[0] + "signature=" + "0" * 64).status_code == 404
+
+    reused = client.post(f"/api/v1/jobs/{job['job_id']}/voice")
+    assert reused.status_code == 200
+    assert reused.json()["audio_url"] == voice["audio_url"]
+    assert len(speech.calls) == 2
+
+    preview = client.post(f"/api/v1/jobs/{job['job_id']}/draft-preview", json={"aspect_ratio": "16:9"})
+    assert preview.status_code == 202
+    for _ in range(100):
+        preview_status = client.get(f"/api/v1/jobs/{job['job_id']}/draft-preview").json()
+        if preview_status["status"] in {"succeeded", "failed"}:
+            break
+        time.sleep(0.1)
+    assert preview_status["status"] == "succeeded", preview_status.get("error")
+    assert len(speech.calls) == 2
+
+    for scene in job["scenes"]:
+        accepted = client.patch(f"/api/v1/jobs/{job['job_id']}/scenes/{scene['scene_id']}", json={"visual_id": scene["visual_options"][0]["id"]})
+        assert accepted.status_code == 200
+    queued = client.post(f"/api/v1/jobs/{job['job_id']}/render", json={"aspect_ratio": "16:9"})
+    assert queued.status_code == 202
+    final_job = wait_for_job(job["job_id"])
+    assert final_job["status"] == "succeeded", final_job["error"]
+    assert len(speech.calls) == 2
+    manifest = client.get(final_job["result"]["manifest"]).json()
+    assert manifest["provider"]["speech"] == speech.name
+    assert not any("440 Hz test tone" in warning for warning in manifest["warnings"])
+    assert main._probe_render(tmp_path / job["job_id"] / "video_16x9.mp4")["audio"]["codec_name"] == "aac"
+
+
+def test_uploaded_voiceover_status_does_not_claim_transcription(tmp_path, monkeypatch):
+    monkeypatch.setattr(main, "DATA_DIR", tmp_path)
+    audio_path = tmp_path / "upload.wav"
+    main._run([main._ffmpeg_path(), "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "sine=frequency=520:duration=0.8", str(audio_path)])
+    response = client.post("/api/v1/broll/jobs", files={"audio": ("upload.wav", audio_path.read_bytes(), "audio/wav")}, data={"aspect_ratio": "16:9"})
+    assert response.status_code == 202
+    job = wait_for_job(response.json()["job_id"])
+    assert job["status"] == "succeeded", job["error"]
+    voice = client.get(f"/api/v1/jobs/{job['job_id']}/voice").json()
+    assert voice["status"] == "uploaded"
+    assert "not transcribed" in voice["label"]
+
+
 def test_scene_speech_adapter_full_render_keeps_measured_audio_and_caption_timing(tmp_path, monkeypatch):
     monkeypatch.setattr(main, "DATA_DIR", tmp_path)
 
@@ -1696,6 +2324,9 @@ def test_openapi_file_matches_registered_api_routes() -> None:
     assert contract["paths"]["/api/v1/broll/jobs"]["post"]["responses"]["202"]
     assert contract["paths"]["/api/v1/broll/jobs"]["post"]["responses"]["409"]
     assert contract["paths"]["/api/v1/jobs/{job_id}"]["get"]["responses"]["404"]
+    assert contract["paths"]["/api/v1/jobs/{job_id}/draft-preview"]["post"]["responses"]["202"]
+    assert contract["paths"]["/api/v1/jobs/{job_id}/draft-preview"]["get"]["responses"]["200"]
+    assert contract["paths"]["/api/v1/jobs/{job_id}/scenes/{scene_id}/visuals/{visual_id}/preview"]["get"]["responses"]["200"]
 
 
 def test_compose_configuration_has_only_the_local_app_service() -> None:
@@ -1888,6 +2519,11 @@ def test_regenerate_scene_visual_is_fresh_and_keeps_caption(tmp_path, monkeypatc
     assert original_options.issubset(seen["excluded"])
     assert other_selected_id in seen["excluded"]
     assert other_scene_id != scene["scene_id"]
+    new_ids = {item["id"] for item in changed["visual_options"]}
+    assert new_ids
+    assert new_ids.isdisjoint(original_options)
+    assert changed["selected_visual_id"] is None
+    assert changed["caption_text"] == "Edited scene caption."
 
 
 def test_find_alternatives_returns_clear_error_when_provider_repeats_only_current_options(tmp_path, monkeypatch) -> None:
@@ -1909,8 +2545,43 @@ def test_find_alternatives_returns_clear_error_when_provider_repeats_only_curren
     assert "no new visual alternatives" in response.json()["detail"]["error"]["message"].lower()
 
 
+def test_find_alternatives_provider_error_preserves_scene_choices_and_text(tmp_path, monkeypatch) -> None:
+    from app.providers import ProviderError
+
+    job = _new_draft(tmp_path, monkeypatch, script="Keep this scene intact if search fails.")
+    scene = job["scenes"][0]
+    original_options = scene["visual_options"]
+    original_caption = scene["caption_text"]
+
+    class UnavailableProvider:
+        name = "unavailable-test-provider"
+        version = "test"
+
+        def visual_options_for_ratio(self, *args):
+            raise ProviderError("PROVIDER_RATE_LIMITED", "Try again after the provider cooldown.", retryable=True, details={"status": 429})
+
+    monkeypatch.setattr(main, "FOOTAGE_PROVIDER", UnavailableProvider())
+    response = client.post(f"/api/v1/jobs/{job['job_id']}/scenes/{scene['scene_id']}/regenerate")
+    assert response.status_code == 503
+    error = response.json()["detail"]["error"]
+    assert error["code"] == "PROVIDER_RATE_LIMITED"
+    assert error["retryable"] is True
+    assert error["details"]["status"] == 429
+    unchanged = client.get(f"/api/v1/jobs/{job['job_id']}/scenes/{scene['scene_id']}").json()
+    assert unchanged["visual_options"] == original_options
+    assert unchanged["caption_text"] == original_caption
+
+
 def test_full_rerender_uses_latest_edits_in_all_downloads(tmp_path, monkeypatch) -> None:
     job = _new_draft(tmp_path, monkeypatch, script="First sentence to revise. Second sentence to approve.")
+    burned_caption_files = []
+    original_burn = main._burn_captions_into_video
+
+    def record_burn(ffmpeg, source, captions_path, output, height):
+        burned_caption_files.append(captions_path.read_text(encoding="utf-8"))
+        return original_burn(ffmpeg, source, captions_path, output, height)
+
+    monkeypatch.setattr(main, "_burn_captions_into_video", record_burn)
     first, second = job["scenes"]
     first_route = f"/api/v1/jobs/{job['job_id']}/scenes/{first['scene_id']}"
     second_route = f"/api/v1/jobs/{job['job_id']}/scenes/{second['scene_id']}"
@@ -1935,12 +2606,16 @@ def test_full_rerender_uses_latest_edits_in_all_downloads(tmp_path, monkeypatch)
     assert timeline["scenes"][0]["clip"] == first["visual_options"][2]["id"]
     assert "The latest caption is exported." in captions
     assert "A revised sentence changes the test tone duration." not in captions
+    assert len(burned_caption_files) == 1
+    assert "The latest caption is exported." in burned_caption_files[0]
+    assert "A revised sentence changes the test tone duration." not in burned_caption_files[0]
     assert timeline["scenes"][0]["visual_decision"] == "accepted"
     assert manifest["assets"][0]["asset_id"] == first["visual_options"][2]["id"]
     assert abs(timeline["duration_seconds"] - manifest["timings"]["rendered_duration_seconds"]) < 0.001
     video = client.get(finished["result"]["video"])
     assert video.status_code == 200 and b"ftyp" in video.content[:32]
     assert manifest["settings"]["aspect_ratio"] == "9:16"
+    assert manifest["settings"]["captions"] == "burned_into_final_mp4"
     assert (tmp_path / job["job_id"] / "video_9x16.mp4").read_bytes() == video.content
 
 
@@ -1986,3 +2661,257 @@ def test_failed_rerender_preserves_previous_files_and_reports_failure(tmp_path, 
     assert failed["error"]["code"] == "PROCESSING_FAILED"
     assert failed["result"] is None
     assert (tmp_path / job["job_id"] / "video_1x1.mp4").read_bytes() == old_video
+
+
+def test_draft_preview_lifecycle_isolation_and_artifacts(tmp_path, monkeypatch) -> None:
+    job = _new_draft(tmp_path, monkeypatch, script="First scene of draft. Second scene of draft.")
+    job_id = job["job_id"]
+    initial_video_path = tmp_path / job_id / "video_1x1.mp4"
+    assert initial_video_path.is_file()
+    initial_video_bytes = initial_video_path.read_bytes()
+
+    assert job["scenes"][0]["visual_decision"] == "suggested"
+    assert job["scenes"][1]["visual_decision"] == "suggested"
+
+    # Saving a candidate for a draft preview must preserve its pending-review
+    # state; only the explicit Accept action may allow final rendering.
+    first_scene = job["scenes"][0]
+    alternate = first_scene["visual_options"][1]["id"]
+    revised_narration = "Saved narration appears in the full draft."
+    revised_caption = "Saved caption appears in the draft preview."
+    saved_candidate = client.patch(
+        f"/api/v1/jobs/{job_id}/scenes/{first_scene['scene_id']}",
+        json={"visual_id": alternate, "visual_decision": "suggested", "narration_text": revised_narration, "caption_text": revised_caption},
+    )
+    assert saved_candidate.status_code == 200
+    assert saved_candidate.json()["scene"]["selected_visual_id"] == alternate
+    assert saved_candidate.json()["scene"]["visual_decision"] == "suggested"
+
+    resp = client.post(f"/api/v1/jobs/{job_id}/draft-preview", json={"aspect_ratio": "1:1"})
+    assert resp.status_code == 202
+    data = resp.json()
+    assert data["status"] == "queued"
+    assert data["job_id"] == job_id
+    preview_id = data["preview_id"]
+    status_url = data["status_url"]
+
+    preview_job = None
+    for _ in range(100):
+        preview_resp = client.get(status_url)
+        assert preview_resp.status_code == 200
+        preview_job = preview_resp.json()
+        if preview_job["status"] in {"succeeded", "failed"}:
+            break
+        time.sleep(0.1)
+
+    assert preview_job is not None
+    assert preview_job["status"] == "succeeded", preview_job.get("error")
+    assert preview_job["job_id"] == job_id
+    assert preview_job["preview_id"] == preview_id
+
+    result = preview_job["result"]
+    assert result is not None
+    assert "video" in result and "captions" in result and "timeline" in result and "manifest" in result
+    draft_video_resp = client.get(result["video"])
+    assert draft_video_resp.status_code == 200
+    assert b"ftyp" in draft_video_resp.content[:32]
+    preview_timeline = client.get(result["timeline"]).json()
+    assert preview_timeline["scenes"][0]["clip"] == alternate
+    assert preview_timeline["scenes"][0]["narration_text"] == revised_narration
+    assert preview_timeline["scenes"][0]["caption_text"] == revised_caption
+    assert [scene["scene_id"] for scene in preview_timeline["scenes"]] == [scene["scene_id"] for scene in job["scenes"]]
+    assert preview_timeline["scenes"][0]["visual_decision"] == "suggested"
+
+    draft_mp4 = tmp_path / preview_id / "video_1x1.mp4"
+    assert draft_mp4.is_file()
+    assert draft_mp4.read_bytes() == draft_video_resp.content
+
+    assert initial_video_path.read_bytes() == initial_video_bytes
+
+    parent_job = client.get(f"/api/v1/jobs/{job_id}").json()
+    assert parent_job["scenes"][0]["visual_decision"] == "suggested"
+    assert parent_job["scenes"][1]["visual_decision"] == "suggested"
+
+    render_resp = client.post(f"/api/v1/jobs/{job_id}/render")
+    assert render_resp.status_code == 422
+    assert render_resp.json()["detail"]["error"]["code"] == "VISUALS_NEED_REVIEW"
+
+
+def test_refreshed_draft_preview_replaces_caption_artifact_for_each_scene(tmp_path, monkeypatch) -> None:
+    job = _new_draft(tmp_path, monkeypatch, script="First narration scene. Second narration scene.")
+    job_id = job["job_id"]
+
+    def render_preview() -> dict:
+        queued = client.post(f"/api/v1/jobs/{job_id}/draft-preview")
+        assert queued.status_code == 202
+        for _ in range(100):
+            preview = client.get(f"/api/v1/jobs/{job_id}/draft-preview").json()
+            if preview["status"] in {"succeeded", "failed"}:
+                assert preview["status"] == "succeeded", preview.get("error")
+                return preview
+            time.sleep(0.1)
+        raise AssertionError("draft preview did not finish")
+
+    first_preview = render_preview()
+    first_srt = client.get(first_preview["result"]["captions"]).text
+    assert "First narration scene." in first_srt
+    assert "Second narration scene." in first_srt
+
+    replacement_captions = ["Fresh caption for scene one.", "Fresh caption for scene two."]
+    for scene, caption in zip(job["scenes"], replacement_captions):
+        updated = client.patch(
+            f"/api/v1/jobs/{job_id}/scenes/{scene['scene_id']}",
+            json={"caption_text": caption},
+        )
+        assert updated.status_code == 200
+
+    refreshed_preview = render_preview()
+    refreshed_srt = client.get(refreshed_preview["result"]["captions"]).text
+    for caption in replacement_captions:
+        assert refreshed_srt.count(caption) == 1
+    assert "First narration scene." not in refreshed_srt
+    assert "Second narration scene." not in refreshed_srt
+
+
+def test_draft_preview_validation_and_errors(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(main, "DATA_DIR", tmp_path)
+
+    assert client.post("/api/v1/jobs/nonexistent-job-id/draft-preview").status_code == 404
+    assert client.get("/api/v1/jobs/nonexistent-job-id/draft-preview").status_code == 404
+
+    job = _new_draft(tmp_path, monkeypatch, script="Scene one. Scene two.")
+    job_id = job["job_id"]
+
+    bad_ratio = client.post(f"/api/v1/jobs/{job_id}/draft-preview", json={"aspect_ratio": "4:3"})
+    assert bad_ratio.status_code == 422
+    assert bad_ratio.json()["detail"]["error"]["code"] == "INVALID_ASPECT_RATIO"
+
+    client.patch(f"/api/v1/jobs/{job_id}/scenes/{job['scenes'][0]['scene_id']}", json={"visual_decision": "rejected", "visual_id": None})
+    missing_resp = client.post(f"/api/v1/jobs/{job_id}/draft-preview")
+    assert missing_resp.status_code == 422
+    assert missing_resp.json()["detail"]["error"]["code"] == "DRAFT_VISUALS_MISSING"
+
+
+def test_per_scene_candidate_preview_and_isolation(tmp_path, monkeypatch) -> None:
+    from app.providers import SceneVisual
+
+    image_path = tmp_path / "test-candidate.png"
+    main._run([main._ffmpeg_path(), "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=purple:s=640x360", "-frames:v", "1", str(image_path)])
+
+    visual_1 = SceneVisual(
+        asset_id="candidate-img-1", color="purple", asset_path=image_path, provider="local-library",
+        source="Test local candidate", source_url="https://example.invalid/candidate-1",
+        license="Test license", attribution="Test attribution", ai_generated=False,
+        selection_reason="Test candidate", relevance_score=0.9,
+        download_url=None, rights_basis="user_attestation", media_type="image",
+    )
+    visual_2 = SceneVisual(
+        asset_id="candidate-img-2", color="blue", asset_path=None, provider="mock-local",
+        source="Generated demo card", source_url=None,
+        license="Generated mock graphic", attribution="SceneCraft Studio", ai_generated=True,
+        selection_reason="Mock demo", relevance_score=None,
+        download_url=None, rights_basis="generated_mock", media_type="image",
+    )
+
+    class MultiOptionProvider:
+        name = "multi-test-provider"
+        version = "test"
+
+        def visual_options_for_ratio(self, scene_text, index, job_id, generation, ratio, exclude_asset_ids):
+            return [visual_1, visual_2]
+
+    monkeypatch.setattr(main, "DATA_DIR", tmp_path / "jobs")
+    monkeypatch.setattr(main, "FOOTAGE_PROVIDER", MultiOptionProvider())
+    job = client.post("/api/v1/broll/jobs", data={"script": "Inspect candidate without saving."}).json()
+    finished = wait_for_job(job["job_id"])
+    assert finished["status"] == "succeeded", finished["error"]
+
+    job_id = finished["job_id"]
+    scene_id = finished["scenes"][0]["scene_id"]
+    initial_selected = finished["scenes"][0]["selected_visual_id"]
+    initial_decision = finished["scenes"][0]["visual_decision"]
+
+    preview_resp = client.get(f"/api/v1/jobs/{job_id}/scenes/{scene_id}/visuals/candidate-img-1/preview")
+    assert preview_resp.status_code == 200
+    assert preview_resp.headers["content-type"] in {"image/png", "image/x-png"}
+    assert preview_resp.content == image_path.read_bytes()
+
+    scene_after_preview = client.get(f"/api/v1/jobs/{job_id}/scenes/{scene_id}").json()
+    assert scene_after_preview["selected_visual_id"] == initial_selected
+    assert scene_after_preview["visual_decision"] == initial_decision
+
+    mock_resp = client.get(f"/api/v1/jobs/{job_id}/scenes/{scene_id}/visuals/candidate-img-2/preview")
+    assert mock_resp.status_code == 422
+    assert mock_resp.json()["detail"]["error"]["code"] == "PREVIEW_UNAVAILABLE"
+
+    patch_resp = client.patch(f"/api/v1/jobs/{job_id}/scenes/{scene_id}", json={"visual_id": "candidate-img-1", "visual_decision": "accepted"})
+    assert patch_resp.status_code == 200
+    assert patch_resp.json()["scene"]["selected_visual_id"] == "candidate-img-1"
+    assert patch_resp.json()["scene"]["visual_decision"] == "accepted"
+
+
+def test_per_scene_candidate_preview_not_found_and_download_failure(tmp_path, monkeypatch) -> None:
+    from app.providers import ProviderError, SceneVisual
+
+    image_path = tmp_path / "valid-test-img.png"
+    main._run([main._ffmpeg_path(), "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=green:s=640x360", "-frames:v", "1", str(image_path)])
+
+    visual_ok = SceneVisual(
+        asset_id="good-asset", color="green", asset_path=image_path, provider="test-prov",
+        source="Good candidate", source_url="https://example.invalid/good",
+        license="Test license", attribution="Test attribution", ai_generated=False,
+        selection_reason="Test candidate", relevance_score=0.9,
+        download_url=None, rights_basis="user_attestation", media_type="image",
+    )
+    visual_fail = SceneVisual(
+        asset_id="failing-download-asset", color="red", asset_path=None, provider="test-prov",
+        source="Failing candidate", source_url="https://example.invalid/failing",
+        license="Test license", attribution="Test attribution", ai_generated=False,
+        selection_reason="Test failing download", relevance_score=0.8,
+        download_url="https://example.invalid/download.mp4", rights_basis="user_attestation", media_type="video",
+    )
+
+    class FailingDownloadProvider:
+        name = "test-prov"
+        version = "test"
+
+        def visual_options_for_ratio(self, scene_text, index, job_id, generation, ratio, exclude_asset_ids):
+            return [visual_ok, visual_fail]
+
+        def materialize(self, selected, job_id):
+            raise ProviderError("PROVIDER_DOWNLOAD_FAILED", "Simulated network timeout during candidate preview", retryable=False)
+
+    monkeypatch.setattr(main, "DATA_DIR", tmp_path / "jobs")
+    monkeypatch.setattr(main, "FOOTAGE_PROVIDER", FailingDownloadProvider())
+
+    job = client.post("/api/v1/broll/jobs", data={"script": "Failing candidate preview test."}).json()
+    finished = wait_for_job(job["job_id"])
+    assert finished["status"] == "succeeded", finished.get("error")
+    job_id = finished["job_id"]
+    scene_id = finished["scenes"][0]["scene_id"]
+
+    assert client.get(f"/api/v1/jobs/bad-job/scenes/{scene_id}/visuals/failing-download-asset/preview").status_code == 404
+    assert client.get(f"/api/v1/jobs/{job_id}/scenes/bad-scene/visuals/failing-download-asset/preview").status_code == 404
+    assert client.get(f"/api/v1/jobs/{job_id}/scenes/{scene_id}/visuals/nonexistent-asset/preview").status_code == 404
+
+    fail_preview = client.get(f"/api/v1/jobs/{job_id}/scenes/{scene_id}/visuals/failing-download-asset/preview")
+    assert fail_preview.status_code == 422
+    assert fail_preview.json()["detail"]["error"]["code"] == "PREVIEW_UNAVAILABLE"
+
+
+def test_stale_export_state_after_saved_edits(tmp_path, monkeypatch) -> None:
+    job = _new_draft(tmp_path, monkeypatch, script="Scene one to approve. Scene two to approve.")
+    job_id = job["job_id"]
+    for scene in job["scenes"]:
+        client.patch(f"/api/v1/jobs/{job_id}/scenes/{scene['scene_id']}", json={"visual_decision": "accepted"})
+    render_resp = client.post(f"/api/v1/jobs/{job_id}/render")
+    assert render_resp.status_code == 202
+    final_job = wait_for_job(job_id)
+    assert final_job["status"] == "succeeded"
+    assert final_job["render_kind"] == "final"
+    assert final_job.get("dirty") is False
+
+    first_scene_id = final_job["scenes"][0]["scene_id"]
+    client.patch(f"/api/v1/jobs/{job_id}/scenes/{first_scene_id}", json={"caption_text": "Updated caption creates stale export."})
+    updated_job = client.get(f"/api/v1/jobs/{job_id}").json()
+    assert updated_job["dirty"] is True

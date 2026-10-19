@@ -120,6 +120,74 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/InternalError'
+  /api/v1/jobs/{job_id}/voice:
+    post:
+      operationId: generateJobVoice
+      summary: Generate or reuse narration audio for the saved scene text
+      description: >-
+        Uses configured ElevenLabs speech or the explicitly labelled mock tone. Per-scene
+        audio is cached by provider, voice, model, and narration text, so unchanged scenes
+        are reused by draft previews and final renders. Uploaded voice-over jobs keep their
+        supplied audio and are not transcribed.
+      parameters:
+        - $ref: '#/components/parameters/JobId'
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Existing cached narration is ready or the job uses uploaded audio.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VoiceStatus'
+        '202':
+          description: Narration generation was queued or is already running.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VoiceStatus'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '503':
+          $ref: '#/components/responses/ProviderError'
+    get:
+      operationId: getJobVoice
+      summary: Get voice generation status and playable audio URL
+      parameters:
+        - $ref: '#/components/parameters/JobId'
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Current voice status; secrets are never returned.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VoiceStatus'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /api/v1/jobs/{job_id}/voice/audio:
+    get:
+      operationId: getJobVoiceAudio
+      summary: Play cached generated narration audio
+      parameters:
+        - $ref: '#/components/parameters/JobId'
+        - name: signature
+          in: query
+          required: true
+          schema:
+            type: string
+            pattern: '^[a-f0-9]{64}$'
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Current generated narration audio.
+          content:
+            audio/wav:
+              schema:
+                type: string
+                format: binary
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /api/v1/jobs/{job_id}/scenes/{scene_id}:
   /api/v1/jobs/{job_id}/scenes/{scene_id}:
     get:
       operationId: getJobScene
@@ -248,6 +316,101 @@ paths:
           $ref: '#/components/responses/Conflict'
         '422':
           $ref: '#/components/responses/ValidationError'
+  /api/v1/jobs/{job_id}/draft-preview:
+    post:
+      operationId: createDraftPreview
+      summary: Render a full draft preview without accepting visuals
+      description: Builds a separate complete MP4 from saved scene choices; pending visuals remain pending and final export still requires acceptance.
+      parameters:
+        - $ref: '#/components/parameters/JobId'
+        - $ref: '#/components/parameters/CorrelationId'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                aspect_ratio:
+                  type: string
+                  enum: ['16:9', '9:16', '1:1']
+      responses:
+        '202':
+          description: Draft preview queued in its own artifact directory.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [job_id, preview_id, status, status_url]
+                properties:
+                  job_id: {type: string}
+                  preview_id: {type: string}
+                  status: {const: queued}
+                  status_url: {type: string}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/Conflict'}
+        '422': {$ref: '#/components/responses/ValidationError'}
+    get:
+      operationId: getDraftPreview
+      summary: Get draft-preview progress and result links
+      parameters:
+        - $ref: '#/components/parameters/JobId'
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Draft-preview status, progress, errors, and artifact links.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [job_id, status, progress, result, error]
+                properties:
+                  job_id: {type: string}
+                  preview_id: {type: string}
+                  status: {type: string, enum: [not_created, queued, running, succeeded, failed]}
+                  progress: {type: integer, minimum: 0, maximum: 100}
+                  result: {type: [object, 'null']}
+                  error: {type: [object, 'null']}
+        '404': {$ref: '#/components/responses/NotFound'}
+  /api/v1/jobs/{job_id}/scenes/{scene_id}/visuals/{visual_id}/preview:
+    get:
+      operationId: getSceneVisualPreview
+      summary: Preview a candidate belonging to one scene without accepting it
+      parameters:
+        - $ref: '#/components/parameters/JobId'
+        - $ref: '#/components/parameters/SceneId'
+        - name: visual_id
+          in: path
+          required: true
+          schema: {type: string}
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: Source image or video bytes for the candidate.
+          content:
+            image/*:
+              schema: {type: string, format: binary}
+            video/*:
+              schema: {type: string, format: binary}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '422': {$ref: '#/components/responses/ValidationError'}
+        '503': {$ref: '#/components/responses/InternalError'}
+  /api/v1/jobs/{job_id}/captions.srt:
+    get:
+      operationId: downloadCurrentSceneCaptions
+      summary: Download a merged SRT from the latest saved scene captions
+      description: Uses the project's absolute scene timeline, including saved caption edits that have not yet been rerendered.
+      parameters:
+        - $ref: '#/components/parameters/JobId'
+        - $ref: '#/components/parameters/CorrelationId'
+      responses:
+        '200':
+          description: A chronologically ordered SubRip file named scenecraft-captions.srt.
+          content:
+            application/x-subrip:
+              schema: {type: string}
+        '404': {$ref: '#/components/responses/NotFound'}
   /api/v1/jobs/{job_id}/artifacts/{filename}:
     get:
       operationId: getJobArtifact
@@ -378,14 +541,18 @@ components:
   schemas:
     ProviderInfo:
       type: object
-      required: [mode, footage_provider, speech_provider, external_processing, disclosure, configuration, provider_links]
+      required: [mode, footage_provider, speech_provider, speech_configured, speech_voice_status, external_processing, disclosure, configuration, provider_links]
       properties:
         mode:
           type: string
-          enum: [demo, mixed, real]
+          enum: [demo, mixed, real, unconfigured]
         footage_provider:
           type: string
         speech_provider:
+          type: string
+        speech_configured:
+          type: boolean
+        speech_voice_status:
           type: string
         external_processing:
           type: boolean
@@ -451,6 +618,38 @@ components:
           const: queued
         status_url:
           type: string
+    VoiceStatus:
+      type: object
+      properties:
+        job_id:
+          type: string
+          format: uuid
+        status:
+          type: string
+          enum: [queued, running, ready, failed, stale, uploaded, not_ready, not_generated]
+        progress:
+          type: integer
+          minimum: 0
+          maximum: 100
+        provider:
+          type: string
+        voice_id:
+          type: [string, 'null']
+        mode:
+          type: string
+          enum: [generated_speech, demo_test_tone]
+        label:
+          type: string
+        duration_seconds:
+          type: number
+        timing_strategy:
+          type: string
+        audio_url:
+          type: string
+        status_url:
+          type: string
+        error:
+          $ref: '#/components/schemas/JobError'
     JobError:
       type: object
       required: [code, message, retryable, details]
@@ -581,7 +780,7 @@ components:
           type: [string, 'null']
         visual_decision:
           type: string
-          enum: [accepted, rejected]
+          enum: [suggested, accepted, rejected]
     Readiness:
       type: object
       required: [status, checks]
@@ -619,6 +818,12 @@ components:
             $ref: '#/components/schemas/ErrorResponse'
     NotFound:
       description: Job or artifact does not exist or is not ready.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+    ProviderError:
+      description: Provider configuration or request failed; inspect retryable and details.
       content:
         application/json:
           schema:

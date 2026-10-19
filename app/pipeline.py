@@ -22,6 +22,7 @@ def scene_search_phrases(scene_text: str, limit: int = 4) -> list[str]:
     text = " ".join(scene_text.split())
     lower = text.lower()
     phrases: list[str] = []
+    outdoor_fallbacks: list[str] = []
 
     def add(phrase: str) -> None:
         if phrase not in phrases and len(phrases) < limit:
@@ -46,18 +47,32 @@ def scene_search_phrases(scene_text: str, limit: int = 4) -> list[str]:
         add("person questioning AI generated decisions")
     if re.search(r"\b(decid\w*|choos\w*|planning|plan\w*)\b", lower):
         add("person making a decision using technology")
+    # Commons file-page indexing is sparse compared with commercial stock
+    # catalogs. Preserve the narration-derived query first, but add concise
+    # visual alternatives for common outdoor concepts so a long sentence does
+    # not require every incidental word to occur in a file title/description.
+    if re.search(r"\b(cyclist|cycling|bicycle|biking|bike)\b", lower) and re.search(r"\b(forest|woodland|trail|path)\b", lower):
+        outdoor_fallbacks.extend(("cyclist forest trail", "cycling trail", "forest trail"))
+    if re.search(r"\b(lake|water)\b", lower) and re.search(r"\b(mist|misty|fog|foggy)\b", lower):
+        outdoor_fallbacks.extend(("misty lake", "lake mist"))
+    if re.search(r"\b(lake|water)\b", lower) and re.search(r"\b(sunrise|dawn)\b", lower):
+        outdoor_fallbacks.append("lake sunrise")
 
-    if len(phrases) < limit:
-        tokens = [token.lower() for token in re.findall(r"[A-Za-z0-9'-]+", text)]
-        useful = [token for token in tokens if token not in SEARCH_STOP_WORDS and len(token) > 2]
-        if useful:
-            add(" ".join(useful[:6]))
-            if len(useful) > 3:
-                add(" ".join(useful[:3]))
-            if len(useful) > 4:
-                add(" ".join(useful[-3:]))
-            if len(useful) > 6:
-                add(" ".join(useful[3:6]))
+    tokens = [token.lower() for token in re.findall(r"[A-Za-z0-9'-]+", text)]
+    useful = [token for token in tokens if token not in SEARCH_STOP_WORDS and len(token) > 2]
+    if useful:
+        # Always try the narration-derived concept first; provider-specific
+        # fallbacks below only widen a search after preserving that intent.
+        add(" ".join(useful[:6]))
+    for phrase in outdoor_fallbacks:
+        add(phrase)
+    if useful:
+        if len(useful) > 3:
+            add(" ".join(useful[:3]))
+        if len(useful) > 4:
+            add(" ".join(useful[-3:]))
+        if len(useful) > 6:
+            add(" ".join(useful[3:6]))
     return phrases
 
 

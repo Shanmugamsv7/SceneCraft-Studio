@@ -87,6 +87,24 @@ class FootageProvider(Protocol):
     def visual_options(self, scene_text: str, index: int, job_id: str, generation: int = 0) -> list[SceneVisual]: ...
 
 
+@dataclass(frozen=True)
+class UnconfiguredFootageProvider:
+    """Expose a selected-but-incomplete real provider without using mock media."""
+
+    name: str
+    version: str
+    configuration_message: str
+
+    def select_visual(self, scene_text: str, index: int, job_id: str) -> SceneVisual:
+        raise ProviderError("BROLL_NOT_CONFIGURED", self.configuration_message, retryable=False)
+
+    def visual_options(self, scene_text: str, index: int, job_id: str, generation: int = 0) -> list[SceneVisual]:
+        raise ProviderError("BROLL_NOT_CONFIGURED", self.configuration_message, retryable=False)
+
+    def visual_options_for_ratio(self, scene_text: str, index: int, job_id: str, generation: int, ratio: str, exclude_asset_ids: set[str]) -> list[SceneVisual]:
+        raise ProviderError("BROLL_NOT_CONFIGURED", self.configuration_message, retryable=False)
+
+
 class SpeechProvider(Protocol):
     """Server-side speech generator. Implementations write audio to a private file."""
 
@@ -287,7 +305,7 @@ class WikimediaCommonsFootageProvider:
     stop_words = PexelsFootageProvider.stop_words
     license_pattern = re.compile(r"^(?:CC0(?:\s+1\.0)?|Public domain|CC BY(?:-SA)?(?:\s+(?:2(?:\.0|\.5)?|3(?:\.0)?|4(?:\.0)?))?)$", re.IGNORECASE)
     max_search_bytes = 2 * 1024 * 1024
-    supported_video_extensions = {".mp4", ".webm", ".ogv", ".ogg", ".mkv", ".mov"}
+    supported_video_extensions = {".mp4", ".webm", ".ogv", ".mkv", ".mov"}
     max_search_phrases = 4
 
     def __init__(self, data_dir: Path, contact: str, timeout: float = 10, max_download_bytes: int = 25 * 1024 * 1024, min_request_interval: float = 0.35, max_retry_after_seconds: int = 3, request_limiter: CommonsRequestLimiter | None = None):
@@ -299,6 +317,7 @@ class WikimediaCommonsFootageProvider:
         self._request_lock = self._request_limiter.lock
         self._min_request_interval = min_request_interval
         self._max_retry_after_seconds = max_retry_after_seconds
+        self._last_rejection_counts: dict[str, int] = {}
 
     def _query(self, scene_text: str) -> str:
         phrases = self._search_phrases(scene_text)
@@ -320,6 +339,7 @@ class WikimediaCommonsFootageProvider:
             raise ProviderError("PROVIDER_NO_MEDIA", "The scene has no searchable words for Wikimedia Commons.", retryable=False)
         attempted_queries: list[str] = []
         collected: dict[str, SceneVisual] = {}
+        rejection_counts: dict[str, int] = {}
         for query in queries:
             attempted_queries.append(query)
             raw = self._search(query, filetype="video")
@@ -330,6 +350,8 @@ class WikimediaCommonsFootageProvider:
             if isinstance(pages, dict):
                 pages = list(pages.values())
             options = self._parse_video_options(pages, query, exclude_asset_ids, scene_text)
+            for reason, count in self._last_rejection_counts.items():
+                rejection_counts[reason] = rejection_counts.get(reason, 0) + count
             for option in options:
                 current = collected.get(option.asset_id)
                 if current is None or (option.relevance_score or 0) > (current.relevance_score or 0):
@@ -342,7 +364,7 @@ class WikimediaCommonsFootageProvider:
             "PROVIDER_NO_MEDIA",
             "Wikimedia Commons returned no video candidates with supported commercial-use license metadata after trying alternative scene searches.",
             retryable=False,
-            details={"queries_tried": attempted_queries},
+            details={"queries_tried": attempted_queries, "rejected_candidates": rejection_counts},
         )
 
     def _search(self, query: str, *, filetype: str = "video") -> bytes:
@@ -397,30 +419,54 @@ class WikimediaCommonsFootageProvider:
 
     def _parse_video_options(self, pages: object, query: str, exclude_asset_ids: set[str], scene_context: str | None = None) -> list[SceneVisual]:
         options: list[SceneVisual] = []
+        rejected: dict[str, int] = {}
+
+        def reject(reason: str) -> None:
+            rejected[reason] = rejected.get(reason, 0) + 1
+
         for page in pages if isinstance(pages, list) else []:
             if not isinstance(page, dict):
+                reject("invalid_page")
                 continue
             infos = page.get("imageinfo")
             if not isinstance(infos, list) or not infos or not isinstance(infos[0], dict):
+                reject("missing_file_metadata")
                 continue
             info = infos[0]
-            if not str(info.get("mime", "")).startswith("video/") or int(info.get("size", 0) or 0) > self._max_download_bytes:
+            # Commons identifies media type separately from the HTTP/MIME
+            # container value. In particular, valid Ogg video files can be
+            # reported as application/ogg rather than video/ogg. Require the
+            # explicit VIDEO media type before allowing that container, so an
+            # audio .ogg file can never become a footage candidate.
+            media_type = str(info.get("mediatype", "")).strip().upper()
+            mime_type = str(info.get("mime", "")).strip().lower()
+            if media_type != "VIDEO" or int(info.get("size", 0) or 0) > self._max_download_bytes:
+                reject("not_video_or_too_large")
                 continue
             download_url = str(info.get("url", ""))
             if not self._allowed_media_url(download_url):
+                reject("unsafe_download_url")
                 continue
-            if Path(urlparse(download_url).path).suffix.lower() not in self.supported_video_extensions:
+            extension = Path(urlparse(download_url).path).suffix.lower()
+            if extension not in self.supported_video_extensions:
+                reject("unsupported_video_extension")
+                continue
+            if not mime_type.startswith("video/") and not (mime_type == "application/ogg" and extension == ".ogv"):
+                reject("unsupported_video_mime")
                 continue
             ext = info.get("extmetadata") or {}
             license_name = self._plain_meta(ext, "LicenseShortName") or self._plain_meta(ext, "UsageTerms")
             license_url = self._plain_meta(ext, "LicenseUrl")
             if not self.license_pattern.fullmatch(license_name):
+                reject("unsupported_or_missing_license")
                 continue
             if license_name.lower().startswith("cc") and (urlparse(license_url).scheme != "https" or urlparse(license_url).hostname != "creativecommons.org"):
+                reject("unverified_license_url")
                 continue
             artist = self._plain_meta(ext, "Artist") or self._plain_meta(ext, "Credit")
             if license_name.lower().startswith("cc by") and not artist:
                 # Attribution is a condition of these licenses; don't fabricate a creator credit.
+                reject("missing_required_attribution")
                 continue
             artist = artist or "Creator not identified on Commons file page"
             title = str(page.get("title", ""))
@@ -430,6 +476,7 @@ class WikimediaCommonsFootageProvider:
             source_url = "https://commons.wikimedia.org/wiki/" + quote(title.replace(" ", "_"), safe="_:()")
             asset_id = f"commons-{page.get('pageid', '')}"
             if not asset_id.removeprefix("commons-").isdigit() or asset_id in exclude_asset_ids:
+                reject("invalid_or_repeated_asset")
                 continue
             thumbnail_url = str(info.get("thumburl", "")) or None
             if thumbnail_url and not self._allowed_media_url(thumbnail_url):
@@ -451,6 +498,7 @@ class WikimediaCommonsFootageProvider:
             ))
             if len(options) == 3:
                 break
+        self._last_rejection_counts = rejected
         return options
 
     @staticmethod
@@ -797,6 +845,89 @@ class ElevenLabsSpeechProvider:
         self._timeout = timeout
         self._max_audio_bytes = max_audio_bytes
 
+    def _http_error(self, exc: HTTPError) -> ProviderError:
+        """Extract only documented, bounded error fields; never surface raw bodies."""
+        raw = b""
+        try:
+            raw = exc.read(8193)
+        except (OSError, AttributeError, TypeError, ValueError):
+            pass
+        finally:
+            try:
+                exc.close()
+            except (OSError, AttributeError):
+                pass
+        if len(raw) > 8192:
+            raw = raw[:8192]
+
+        detail: dict[str, object] = {}
+        try:
+            payload = json.loads(raw.decode("utf-8"))
+            value = payload.get("detail") if isinstance(payload, dict) else None
+            if isinstance(value, dict):
+                detail = value
+        except (UnicodeDecodeError, json.JSONDecodeError, TypeError):
+            pass
+
+        def safe_text(value: object, limit: int = 240) -> str | None:
+            if not isinstance(value, str):
+                return None
+            text = " ".join(value.split())
+            if self._api_key:
+                text = text.replace(self._api_key, "[redacted]")
+            text = re.sub(r"(?i)(xi-api-key|api[_ -]?key|authorization|bearer)\s*[:=]\s*[^\s,;]+", r"\1=[redacted]", text)
+            text = re.sub(r"(?i)\b(?:sk|xi|token)[-_][A-Za-z0-9_-]{12,}\b", "[redacted-token]", text)
+            text = re.sub(r"https?://[^\s]+", "[link omitted]", text)
+            text = re.sub(r"[\x00-\x1f\x7f]", " ", text)
+            text = " ".join(text.split())
+            return text[:limit] or None
+
+        provider_message = safe_text(detail.get("message"))
+        provider_code = safe_text(detail.get("code"), 80)
+        provider_type = safe_text(detail.get("type"), 80)
+        request_id = safe_text(detail.get("request_id"), 100)
+        retryable = exc.code == 429 or exc.code >= 500
+        free_library_voice_restriction = (
+            exc.code == 402
+            and provider_message is not None
+            and "free" in provider_message.casefold()
+            and "library voice" in provider_message.casefold()
+            and "api" in provider_message.casefold()
+        )
+        code = (
+            "PROVIDER_RATE_LIMITED" if exc.code == 429
+            else "PROVIDER_AUTH_FAILED" if exc.code in {401, 403}
+            else "PROVIDER_CONFLICT" if exc.code == 409
+            else "PROVIDER_VOICE_PLAN_RESTRICTED" if free_library_voice_restriction
+            else "PROVIDER_PAYMENT_REQUIRED" if exc.code == 402
+            else "PROVIDER_UNAVAILABLE"
+        )
+        if free_library_voice_restriction:
+            message = (
+                f"ElevenLabs rejected the configured voice (HTTP 402): {provider_message} "
+                "Choose a voice that your account permits for API use, update ELEVENLABS_VOICE_ID in the project .env, "
+                "and restart SceneCraft Studio. The configured voice was not changed."
+            )
+        elif exc.code == 402 and provider_message:
+            message = (
+                f"ElevenLabs requires account or plan access for this request (HTTP 402): {provider_message} "
+                "Review voice eligibility and API credits in your ElevenLabs account."
+            )
+        elif provider_message:
+            message = f"ElevenLabs speech request failed with HTTP {exc.code}: {provider_message}"
+        elif exc.code == 409:
+            message = "ElevenLabs reported a request conflict (HTTP 409), but its response did not include a readable explanation. Check the provider status details and try again."
+        else:
+            message = f"ElevenLabs speech request failed with HTTP {exc.code}."
+        details: dict[str, object] = {"status_code": exc.code}
+        if provider_code:
+            details["provider_error_code"] = provider_code
+        if provider_type:
+            details["provider_error_type"] = provider_type
+        if request_id:
+            details["provider_request_id"] = request_id
+        return ProviderError(code, message, retryable=retryable, details=details)
+
     def synthesize(self, text: str, destination: Path) -> dict[str, str | None]:
         from urllib.parse import quote
 
@@ -806,13 +937,18 @@ class ElevenLabsSpeechProvider:
         try:
             with urlopen(request, timeout=self._timeout) as response:
                 audio = response.read(self._max_audio_bytes + 1)
-                usage = response.headers.get("character-cost")
+                headers = getattr(response, "headers", None)
+                header_get = getattr(headers, "get", None)
+                usage = header_get("character-cost") if callable(header_get) else None
         except HTTPError as exc:
-            retryable = exc.code == 429 or exc.code >= 500
-            code = "PROVIDER_RATE_LIMITED" if exc.code == 429 else "PROVIDER_AUTH_FAILED" if exc.code in {401, 403} else "PROVIDER_UNAVAILABLE"
-            raise ProviderError(code, f"ElevenLabs speech request failed with HTTP {exc.code}.", retryable=retryable, details={"status_code": exc.code}) from exc
+            raise self._http_error(exc) from exc
         except (URLError, TimeoutError, OSError) as exc:
             raise ProviderError("PROVIDER_UNAVAILABLE", "ElevenLabs speech service could not be reached.", retryable=True, details={"exception_type": type(exc).__name__}) from exc
+        except (AttributeError, TypeError, ValueError) as exc:
+            raise ProviderError("PROVIDER_INVALID_RESULT", "ElevenLabs returned a malformed audio response.", retryable=False) from exc
+        if not isinstance(audio, (bytes, bytearray)):
+            raise ProviderError("PROVIDER_INVALID_RESULT", "ElevenLabs returned a malformed audio response.", retryable=False)
+        audio = bytes(audio)
         if len(audio) > self._max_audio_bytes:
             raise ProviderError("PROVIDER_INVALID_RESULT", "ElevenLabs audio response exceeded the configured size limit.", retryable=False)
         has_mpeg_frame = len(audio) > 1 and audio[0] == 0xFF and audio[1] & 0xE0 == 0xE0

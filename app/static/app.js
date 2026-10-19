@@ -13,8 +13,15 @@ let renderedRatio = null;
 let currentResult = null;
 let draftPreviewResult = null;
 let draftPreviewStatus = null;
+let draftPreviewRatio = null;
 let activePreviewSceneId = null;
 let previewLoadError = false;
+let activePreviewView = "draft";
+let draftPreviewStale = false;
+let voicePreviewObjectUrl = null;
+let currentVoiceStatus = null;
+let captionRequestId = 0;
+let captionTrackId = 0;
 const ratioValue = () => document.querySelector('input[name="aspect_ratio"]:checked').value;
 let selectedRatio = ratioValue();
 
@@ -36,6 +43,11 @@ const ratioLabel = (ratio) => ({ "16:9": "16:9 Landscape", "9:16": "9:16 Portrai
 async function loadProviderInfo() {
   try {
     const info = await api("/api/v1/providers");
+    const voiceProviderStatus = document.querySelector("#voice-provider-status");
+    if (voiceProviderStatus) {
+      voiceProviderStatus.textContent = info.speech_voice_status || info.speech_provider;
+      voiceProviderStatus.className = `voice-provider-status ${info.speech_provider === "mock-sine-test-tone" ? "demo" : info.speech_configured === false ? "error" : ""}`;
+    }
     const note = document.querySelector(".engine-note");
     note.textContent = `${info.mode.toUpperCase()} MODE · ${info.disclosure}`;
     for (const [provider, url] of Object.entries(info.provider_links || {})) {
@@ -61,14 +73,77 @@ async function loadProviderInfo() {
   }
 }
 
-function setCaptionTrack(srt) {
-  const track = document.querySelector("#caption-track");
+function clearCaptionTracks() {
+  const video = document.querySelector("#preview-video");
+  // Invalidate a fetch that started for a previous player state.  Merely
+  // removing a <track> is not enough: its SRT request may resolve later.
+  captionRequestId += 1;
+  captionTrackId += 1;
+  // Some browsers retain a detached TextTrack until it is explicitly
+  // disabled. Clear both the DOM tracks and the video track list so a
+  // refreshed draft cannot display the same native cue twice.
+  Array.from(video.textTracks).forEach((textTrack) => { textTrack.mode = "disabled"; });
+  video.querySelectorAll("track").forEach((track) => track.remove());
   if (captionObjectUrl) URL.revokeObjectURL(captionObjectUrl);
+  captionObjectUrl = null;
+}
+
+function setCaptionTrack(srt, expectedVideoUrl) {
+  const video = document.querySelector("#preview-video");
+  clearCaptionTracks();
+  const trackId = captionTrackId;
   const vtt = `WEBVTT\n\n${srt.replace(/^\uFEFF/, "").replace(/(\d{2}:\d{2}:\d{2}),(\d{3})/g, "$1.$2")}`;
   captionObjectUrl = URL.createObjectURL(new Blob([vtt], { type: "text/vtt" }));
+  const track = document.createElement("track");
+  track.id = "caption-track";
+  track.kind = "captions";
+  track.srclang = "en";
+  track.label = "SceneCraft captions";
+  track.default = true;
+  // A hidden track loads its cues without painting. It is made visible only
+  // once the VTT has loaded for the video currently in the player.
+  track.addEventListener("load", () => {
+    if (trackId !== captionTrackId || !track.isConnected || video.dataset.exportUrl !== expectedVideoUrl) return;
+    // Showing a loaded native track makes the browser evaluate cues against
+    // the current media time. Reassigning the same time also makes that
+    // synchronization explicit after an asynchronous track load, without
+    // restarting the video or relying on a timeout.
+    const playbackTime = video.currentTime;
+    track.track.mode = "showing";
+    if (Number.isFinite(playbackTime) && video.readyState >= 1) video.currentTime = playbackTime;
+  }, { once: true });
+  video.append(track);
+  track.track.mode = "hidden";
   track.src = captionObjectUrl;
-  track.track.mode = "showing";
-  document.querySelector("#preview-video").load();
+}
+
+async function loadCaptionsForPreview(result) {
+  const requestId = ++captionRequestId;
+  if (!result?.captions) return;
+  const expectedVideoUrl = new URL(result.video, window.location.href).href;
+  // Make the video selection first. The caption track must be attached to
+  // this exact draft/final asset, never the previous result.
+  syncMainPreview();
+  const video = document.querySelector("#preview-video");
+  if (video.dataset.exportUrl !== expectedVideoUrl) return;
+  const response = await fetch(result.captions).catch(() => null);
+  if (!response?.ok) return;
+  const captions = await response.text();
+  if (requestId !== captionRequestId) return;
+  if (video.dataset.exportUrl !== expectedVideoUrl) return;
+  setCaptionTrack(captions, expectedVideoUrl);
+  const firstCue = captions.trim().split(/\r?\n\s*\r?\n/)[0] || "";
+  document.querySelector("#preview-caption-text").textContent = firstCue.split(/\r?\n/).slice(2).join(" ") || "Caption text is empty.";
+}
+
+function previewCaptionResult(job) {
+  const draftResult = draftPreviewResult?.video
+    ? draftPreviewResult
+    : job.draft_preview?.result?.video
+      ? job.draft_preview.result
+      : job.render_kind !== "final" ? job.result : null;
+  const finalResult = job.render_kind === "final" ? job.result : null;
+  return window.SceneCraftPreview.selectCaptionResult({ draftResult, finalResult, activeView: activePreviewView });
 }
 
 function showNotice(message) {
@@ -98,17 +173,78 @@ function updateEditState() {
   document.querySelector("#save-button").disabled = !dirty || working;
   const canRender = currentJob && ["succeeded", "failed"].includes(currentJob.status) && scenes.length > 0 && scenes.every((scene) => {
     const decision = scene._draft?.visual_decision ?? scene.visual_decision;
-    const selected = scene._draft?.visual_id ?? scene.selected_visual_id;
+    const selected = scene._draft?.visual_id !== undefined ? scene._draft.visual_id : scene.selected_visual_id;
     return decision === "accepted" && Boolean(selected);
   });
   document.querySelector("#render-button").disabled = !canRender || working;
   document.querySelector("#render-hint").textContent = canRender ? "This rebuilds the complete video with your saved edits." : "Accept or replace each suggested visual to enable rendering.";
-  document.querySelector("#draft-preview-button").disabled = !currentJobId || !scenes.length || working || !scenes.every((scene) => Boolean(scene._draft?.visual_id ?? scene.selected_visual_id));
+
+  const voiceButton = document.querySelector("#generate-voice-button");
+  if (voiceButton) {
+    const uploadSelected = Boolean(audioInput.files?.length);
+    const uploadedJob = currentJob?.voice_input_type === "user_upload";
+    voiceButton.disabled = !currentJobId || working || uploadSelected || uploadedJob || ["queued", "running"].includes(currentJob?.status);
+    voiceButton.textContent = currentVoiceStatus?.status === "ready" ? "Refresh narration" : "Generate narration";
+  }
+
+  const draftButton = document.querySelector("#draft-preview-button");
+  const draftStatusEl = document.querySelector("#draft-preview-status");
+  const hasDraft = Boolean(draftPreviewResult?.video || currentJob?.draft_preview?.result?.video);
+  if (draftButton) {
+    draftButton.textContent = hasDraft ? "Refresh draft preview" : "Create draft preview";
+    const allHaveVisual = scenes.length > 0 && scenes.every((scene) => {
+      const vid = scene._draft?.visual_id !== undefined ? scene._draft.visual_id : scene.selected_visual_id;
+      const dec = scene._draft?.visual_decision ?? scene.visual_decision;
+      return Boolean(vid) && dec !== "rejected";
+    });
+    const draftBusy = currentJob?.draft_preview?.status === "queued" || currentJob?.draft_preview?.status === "running" || draftPreviewStatus === "running";
+    draftButton.disabled = !currentJobId || !allHaveVisual || working || draftBusy;
+    if (draftBusy) {
+      draftButton.textContent = "Generating draft preview…";
+      if (draftStatusEl) draftStatusEl.textContent = `Draft preview rendering · ${currentJob?.draft_preview?.progress || 0}%`;
+    } else if (!allHaveVisual) {
+      if (draftStatusEl) draftStatusEl.textContent = "Choose a visual for every scene to preview the complete draft.";
+    } else if (hasDraft && (draftPreviewStale || dirty || ratioDirty)) {
+      if (draftStatusEl) draftStatusEl.textContent = "Saved edits are pending. Refresh draft preview to update the full video.";
+    } else if (hasDraft) {
+      if (draftStatusEl) draftStatusEl.textContent = "Draft preview ready. Review playback before final export.";
+    } else {
+      if (draftStatusEl) draftStatusEl.textContent = "Save a visual choice for every scene to preview the complete draft.";
+    }
+  }
+
+  const modeBar = document.querySelector("#preview-mode-bar");
+  const viewDraftTab = document.querySelector("#view-draft-tab");
+  const viewFinalTab = document.querySelector("#view-final-tab");
+  const hasFinalVideo = Boolean(currentResult?.video && currentJob?.render_kind === "final");
+  const hasDraftVideo = Boolean(draftPreviewResult?.video);
+  if (modeBar) {
+    modeBar.hidden = !(hasFinalVideo && hasDraftVideo);
+    if (viewDraftTab) {
+      viewDraftTab.className = `preview-mode-tab ${activePreviewView === "draft" ? "active" : ""}`;
+      viewDraftTab.disabled = !hasDraftVideo;
+    }
+    if (viewFinalTab) {
+      viewFinalTab.className = `preview-mode-tab ${activePreviewView === "final" ? "active" : ""}`;
+      viewFinalTab.disabled = !hasFinalVideo;
+    }
+  }
+
+  // Scene cards are not rebuilt every time the global busy state changes.
+  // Reconcile these controls here so a card rendered during a request does
+  // not remain disabled after the request has finished.
+  document.querySelectorAll('.find-alternatives-button[data-scene-id]').forEach((button) => {
+    const scene = scenes.find((item) => item.scene_id === button.dataset.sceneId);
+    const searching = Boolean(scene?._searchingAlternatives);
+    button.disabled = !scene || searching || working;
+    button.textContent = searching ? "Searching alternatives…" : "Find alternatives";
+  });
+
   syncMainPreview();
 }
 
 function sceneField(scene, name) { return scene._draft?.[name] ?? scene[name] ?? ""; }
-function sceneVisualId(scene) { return scene._draft?.visual_id ?? scene.selected_visual_id ?? ""; }
+function sceneVisualId(scene) { return scene._draft?.visual_id !== undefined ? (scene._draft.visual_id || "") : (scene.selected_visual_id || ""); }
 function sceneDecision(scene) { return scene._draft?.visual_decision ?? scene.visual_decision ?? "suggested"; }
 
 function renderScenes() {
@@ -153,7 +289,11 @@ function renderScenes() {
       input.addEventListener("input", () => {
         scene._draft ||= {};
         scene._draft[name] = input.value;
+        draftPreviewStale = Boolean(draftPreviewResult?.video || currentResult?.video);
         activePreviewSceneId = scene.scene_id;
+        if (name === "narration_text" && !voicePreviewObjectUrl) {
+          showVoiceStatus({ status: "stale", message: "Narration is edited. Save the scene, then generate voice again; the old audio will not be reused." });
+        }
         updateEditState();
       });
       wrap.append(fieldLabel, input);
@@ -191,11 +331,14 @@ function renderScenes() {
     const options = document.createElement("div");
     options.className = "visual-options";
     const selectedId = sceneVisualId(scene);
+    const inspectedId = scene._inspectingVisualId || selectedId || (scene.visual_options && scene.visual_options[0]?.id);
     for (const visual of scene.visual_options || []) {
       const choice = document.createElement("button");
       choice.type = "button";
-      choice.className = `visual-choice ${selectedId === visual.id ? "selected" : ""}`;
-      choice.setAttribute("aria-pressed", selectedId === visual.id ? "true" : "false");
+      const isSelected = selectedId === visual.id;
+      const isInspected = inspectedId === visual.id;
+      choice.className = `visual-choice ${isSelected ? "selected" : ""} ${isInspected ? "inspecting" : ""}`;
+      choice.setAttribute("aria-pressed", isSelected ? "true" : "false");
       choice.title = `${visual.selection_reason}. ${visual.license}`;
       const swatch = document.createElement(visual.thumbnail_url ? "img" : "span");
       swatch.className = "visual-swatch";
@@ -222,9 +365,7 @@ function renderScenes() {
       description.append(small);
       choice.append(swatch, description);
       choice.addEventListener("click", () => {
-        scene._draft ||= {};
-        scene._draft.visual_id = visual.id;
-        scene._draft.visual_decision = "suggested";
+        scene._inspectingVisualId = visual.id;
         activePreviewSceneId = scene.scene_id;
         renderScenes();
       });
@@ -237,24 +378,31 @@ function renderScenes() {
     scenePreview.setAttribute("aria-live", "polite");
     const previewHeading = document.createElement("b");
     previewHeading.textContent = "Scene preview · source candidate, not the full draft";
+    const previewDecision = document.createElement("small");
+    previewDecision.className = "candidate-review-state";
+    previewDecision.textContent = selectedId === inspectedId && decision === "accepted" ? "Accepted visual" : "Previewing candidate · not accepted";
     const previewContext = document.createElement("small");
     previewContext.textContent = `${Number(scene.start).toFixed(2)}–${Number(scene.end).toFixed(2)}s · caption: ${sceneField(scene, "caption_text")}`;
-    scenePreview.append(previewHeading, previewContext);
-    const previewVisual = (scene.visual_options || []).find((item) => item.id === selectedId);
-    if (previewVisual?.media_type === "image" && previewVisual.thumbnail_url) {
-      const previewImage = document.createElement("img");
-      previewImage.className = "scene-candidate-image";
-      previewImage.alt = `Scene ${index + 1} selected source image preview`;
-      previewImage.src = previewVisual.thumbnail_url;
-      previewImage.referrerPolicy = "no-referrer";
-      previewImage.onerror = () => { previewContext.textContent = "Image preview could not be loaded. Review the source link or choose another candidate."; };
-      scenePreview.append(previewImage);
-    } else if (previewVisual?.provider === "mock-local") {
+    const previewStatus = document.createElement("small");
+    previewStatus.className = "scene-preview-status";
+    previewStatus.setAttribute("role", "status");
+    scenePreview.append(previewHeading, previewDecision, previewContext, previewStatus);
+    const previewVisual = (scene.visual_options || []).find((item) => item.id === inspectedId);
+    if (previewVisual?.provider === "mock-local") {
       const mock = document.createElement("div");
       mock.className = "scene-candidate-mock";
       mock.style.background = previewVisual.color?.startsWith("0x") ? `#${previewVisual.color.slice(2)}` : (previewVisual.color || "#557967");
       mock.textContent = "Generated mock graphic · demo only";
       scenePreview.append(mock);
+    } else if (previewVisual?.media_type === "image") {
+      previewStatus.textContent = "Loading source image preview…";
+      const previewImage = document.createElement("img");
+      previewImage.className = "scene-candidate-image";
+      previewImage.alt = `Scene ${index + 1} selected source image preview with subtle motion`;
+      previewImage.src = `/api/v1/jobs/${encodeURIComponent(currentJobId)}/scenes/${encodeURIComponent(scene.scene_id)}/visuals/${encodeURIComponent(previewVisual.id)}/preview?_candidate=${encodeURIComponent(previewVisual.id)}`;
+      previewImage.onload = () => { previewStatus.textContent = "Source image ready · subtle motion preview"; };
+      previewImage.onerror = () => { previewStatus.textContent = "Image preview could not be loaded. Review the source link or choose another candidate."; };
+      scenePreview.append(previewImage);
     } else if (previewVisual) {
       const previewMedia = document.createElement(previewVisual.media_type === "image" ? "img" : "video");
       previewMedia.className = "scene-candidate-media";
@@ -262,9 +410,9 @@ function renderScenes() {
       previewMedia.preload = "metadata";
       if (previewMedia.tagName === "VIDEO") { previewMedia.controls = true; previewMedia.playsInline = true; previewMedia.muted = true; }
       previewMedia.src = `/api/v1/jobs/${encodeURIComponent(currentJobId)}/scenes/${encodeURIComponent(scene.scene_id)}/visuals/${encodeURIComponent(previewVisual.id)}/preview?_candidate=${encodeURIComponent(previewVisual.id)}`;
-      previewMedia.addEventListener("loadstart", () => { previewContext.textContent = "Loading selected scene source preview…"; }, { once: true });
-      previewMedia.addEventListener(previewMedia.tagName === "VIDEO" ? "loadeddata" : "load", () => { previewContext.textContent = `${Number(scene.start).toFixed(2)}–${Number(scene.end).toFixed(2)}s · caption: ${sceneField(scene, "caption_text")}`; }, { once: true });
-      previewMedia.addEventListener("error", () => { previewContext.textContent = "Source preview failed to load. Try another candidate or Find alternatives."; }, { once: true });
+      previewMedia.addEventListener("loadstart", () => { previewStatus.textContent = "Loading source preview…"; }, { once: true });
+      previewMedia.addEventListener(previewMedia.tagName === "VIDEO" ? "loadeddata" : "load", () => { previewStatus.textContent = "Source preview ready."; }, { once: true });
+      previewMedia.addEventListener("error", () => { previewStatus.textContent = "Source preview failed to load. Try another candidate or Find alternatives."; }, { once: true });
       scenePreview.append(previewMedia);
     } else {
       previewContext.textContent = "Select a candidate above to preview it with this scene’s timing and caption.";
@@ -276,13 +424,15 @@ function renderScenes() {
     const accept = document.createElement("button");
     accept.className = "mini-button accept";
     accept.type = "button";
-      const selectedForAccept = (scene.visual_options || []).find((visual) => visual.id === selectedId);
-      accept.textContent = `Accept selected ${selectedForAccept?.media_type === "image" ? "image" : "video"}`;
-    accept.disabled = !(selectedId || scene.selected_visual_id) || decision === "accepted";
+    const selectedForAccept = (scene.visual_options || []).find((visual) => visual.id === inspectedId);
+    accept.textContent = `Accept selected ${selectedForAccept?.media_type === "image" ? "image" : "video"}`;
+    const isAlreadyAccepted = selectedId === inspectedId && decision === "accepted";
+    accept.disabled = !inspectedId || isAlreadyAccepted;
     accept.addEventListener("click", () => {
       scene._draft ||= {};
-      scene._draft.visual_id = selectedId || scene.selected_visual_id;
+      scene._draft.visual_id = inspectedId;
       scene._draft.visual_decision = "accepted";
+      draftPreviewStale = Boolean(draftPreviewResult?.video || currentResult?.video);
       activePreviewSceneId = scene.scene_id;
       renderScenes();
     });
@@ -290,20 +440,23 @@ function renderScenes() {
     reject.className = "mini-button reject";
     reject.type = "button";
     reject.textContent = "Reject suggestion";
+    reject.disabled = decision === "rejected" && !selectedId;
     reject.addEventListener("click", () => {
       scene._draft ||= {};
       scene._draft.visual_id = null;
       scene._draft.visual_decision = "rejected";
+      draftPreviewStale = Boolean(draftPreviewResult?.video || currentResult?.video);
       activePreviewSceneId = scene.scene_id;
       renderScenes();
     });
     const regenerate = document.createElement("button");
-    regenerate.className = "mini-button";
+    regenerate.className = "mini-button find-alternatives-button";
+    regenerate.dataset.sceneId = scene.scene_id;
     regenerate.type = "button";
     regenerate.disabled = Boolean(scene._searchingAlternatives || working);
     regenerate.textContent = scene._searchingAlternatives ? "Searching alternatives…" : "Find alternatives";
     regenerate.addEventListener("click", () => regenerateVisual(scene));
-    const selected = (scene.visual_options || []).find((visual) => visual.id === selectedId);
+    const selected = previewVisual;
     const source = document.createElement(selected?.source_url ? "a" : "span");
     source.className = "scene-source";
     if (selected?.source_url) {
@@ -337,10 +490,24 @@ function renderScenes() {
 }
 
 function syncMainPreview() {
-  const isFinal = currentJob?.render_kind === "final";
-  const activeResult = isFinal && currentResult?.video ? currentResult : draftPreviewResult?.video ? draftPreviewResult : currentResult;
-  const isDraft = Boolean(activeResult?.video && (activeResult === draftPreviewResult || currentJob?.render_kind !== "final"));
-  const stale = Boolean(activeResult?.video && activeResult === currentResult && (scenes.some(sceneDirty) || currentJob?.dirty || (renderedRatio && selectedRatio !== renderedRatio) || ["queued", "running", "failed"].includes(currentJob?.status)));
+  const hasFinalVideo = Boolean(currentResult?.video && currentJob?.render_kind === "final");
+  const jobDraftResult = currentResult?.video && currentJob?.render_kind !== "final" ? currentResult : null;
+  const availableDraftResult = draftPreviewResult?.video ? draftPreviewResult : jobDraftResult;
+  const hasDraftVideo = Boolean(availableDraftResult?.video);
+  const selectedPreview = window.SceneCraftPreview.selectMainPreview({
+    draftResult: availableDraftResult,
+    finalResult: hasFinalVideo ? currentResult : null,
+    activeView: activePreviewView,
+  });
+  const activeResult = selectedPreview.result;
+  const isDraft = selectedPreview.kind === "draft";
+  const dirty = scenes.some(sceneDirty);
+  const activeRatio = isDraft ? (draftPreviewRatio || selectedRatio) : (renderedRatio || selectedRatio);
+  const ratioDirty = selectedRatio !== activeRatio;
+  const stale = Boolean(activeResult?.video && (
+    (isDraft && (draftPreviewStale || dirty || ratioDirty)) ||
+    (!isDraft && (dirty || currentJob?.dirty || ratioDirty || ["queued", "running", "failed"].includes(currentJob?.status)))
+  ));
   const state = window.SceneCraftPreview.resolvePreviewState({ result: activeResult, scenes, activeSceneId: activePreviewSceneId, stale });
   const empty = document.querySelector("#preview-empty");
   const source = document.querySelector("#source-preview");
@@ -356,9 +523,21 @@ function syncMainPreview() {
     empty.hidden = true; source.hidden = true; video.hidden = false;
     title.textContent = isDraft ? (state.kind === "stale" ? "Previous draft preview · edits pending" : "Full draft preview · not final export") : (state.kind === "stale" ? "Previous export - edits need rendering" : "Final rendered video");
     description.textContent = isDraft ? "This playable MP4 uses the saved scene order, visual choices, captions, and timing. Candidate choices remain pending until accepted." : state.kind === "stale" ? "This is the last completed MP4. Your latest scene or format changes are not in this export yet." : "This is the actual final exported MP4, with the accepted visuals and current captions.";
-    previewRatio.textContent = renderedRatio || selectedRatio;
+    previewRatio.textContent = activeRatio;
     document.querySelector("#preview-state").textContent = isDraft ? (state.kind === "stale" ? "Draft is older than saved edits" : "Full draft preview ready") : state.kind === "stale" ? "Last export - edits pending" : "Final export ready";
     document.querySelector("#preview-load-error").hidden = !previewLoadError;
+    if (activeResult?.video) {
+      const baseUrl = new URL(activeResult.video, window.location.href);
+      const sameExport = video.dataset.exportUrl === baseUrl.href;
+      const versionedUrl = new URL(baseUrl);
+      if (!sameExport || !video.src) versionedUrl.searchParams.set("_sc_export", `${currentJobId || "job"}-${Date.now()}`);
+      const nextVideoUrl = sameExport && video.src ? video.src : versionedUrl.href;
+      if (video.src !== nextVideoUrl) {
+        video.dataset.exportUrl = baseUrl.href;
+        video.src = nextVideoUrl;
+        video.load();
+      }
+    }
     if (state.kind === "stale") {
       const activeScene = scenes.find((scene) => scene.scene_id === activePreviewSceneId) || scenes[0];
       if (activeScene) document.querySelector("#preview-caption-text").textContent = activeScene._draft?.caption_text ?? activeScene.caption_text ?? "No caption text for this scene.";
@@ -422,10 +601,7 @@ function showResults(result, { forceReload = false } = {}) {
     container.append(empty);
     document.querySelector("#preview-video").hidden = true;
     document.querySelector("#preview-empty").hidden = false;
-    if (captionObjectUrl) URL.revokeObjectURL(captionObjectUrl);
-    captionObjectUrl = null;
-    document.querySelector("#caption-track").src = "";
-    document.querySelector("#caption-track").track.mode = "disabled";
+    clearCaptionTracks();
     document.querySelector("#preview-caption-text").textContent = "Captions will be available after the render.";
     renderedRatio = null;
     document.querySelector("#preview-ratio").textContent = selectedRatio;
@@ -501,22 +677,24 @@ async function refreshStatus({ refreshScenes = false } = {}) {
   const previousStatus = currentJob?.status;
   const job = await api(currentStatusUrl);
   currentJob = job;
+  if (job.draft_preview?.result?.video) {
+    draftPreviewResult = job.draft_preview.result;
+    draftPreviewStatus = job.draft_preview.status;
+    draftPreviewRatio = job.draft_preview.ratio || draftPreviewRatio;
+  }
   setStatus(job.status, job.progress, job.error?.message || (job.status === "succeeded" ? "Render is ready. Review the storyboard and save any changes." : `Processing your video · ${job.progress}%`));
   if (job.status === "succeeded") {
     showResults(job.result, { forceReload: previewLoadError || previousStatus !== "succeeded" || currentResult?.video !== job.result?.video });
-    if (job.result?.captions) {
-      const response = await fetch(job.result.captions).catch(() => null);
-      if (response?.ok) {
-        const captions = await response.text();
-        setCaptionTrack(captions);
-        const firstCue = captions.trim().split(/\r?\n\s*\r?\n/)[0] || "";
-        document.querySelector("#preview-caption-text").textContent = firstCue.split(/\r?\n/).slice(2).join(" ") || "Caption text is empty.";
-      }
+    if (job.render_kind === "final") {
+      activePreviewView = "final";
     }
+    await loadCaptionsForPreview(previewCaptionResult(job));
+    await refreshVoiceStatus();
     if (refreshScenes) loadScenes(job);
   } else if (job.status === "failed") {
     if (job.scenes?.length) loadScenes(job);
     showNotice(`${job.error?.code || "RENDER_FAILED"}: ${job.error?.message || "The render failed."}`);
+    await refreshVoiceStatus();
   }
   updateEditState();
   return job;
@@ -548,6 +726,95 @@ async function saveEdits() {
     return true;
   } catch (error) { showNotice(error.message); return false; }
   finally { working = false; updateEditState(); }
+}
+
+function showVoiceStatus(status) {
+  currentVoiceStatus = status;
+  const message = document.querySelector("#voice-status");
+  const player = document.querySelector("#voice-preview");
+  const providerStatus = document.querySelector("#voice-provider-status");
+  if (status?.status === "ready" && status.audio_url) {
+    if (providerStatus) {
+      const isDemoTone = status.mode === "demo_test_tone";
+      providerStatus.textContent = isDemoTone ? "DEMO - generated 440 Hz test tone, not speech" : `${status.provider || "Speech provider"} narration ready`;
+      providerStatus.className = `voice-provider-status ${isDemoTone ? "demo" : ""}`;
+    }
+    const url = new URL(status.audio_url, window.location.href);
+    url.searchParams.set("_voice", status.signature || Date.now());
+    if (player.dataset.voiceUrl !== url.href) {
+      player.pause();
+      player.src = url.href;
+      player.dataset.voiceUrl = url.href;
+      player.hidden = false;
+      player.load();
+    }
+    message.textContent = `${status.label || "Narration ready"} - ${Number(status.duration_seconds).toFixed(2)} seconds. ${status.timing_strategy || ""}`;
+  } else if (status?.status === "uploaded") {
+    message.textContent = status.label || "Uploaded voice-over is used as supplied; speech is not transcribed.";
+  } else if (status?.status === "running" || status?.status === "queued") {
+    message.textContent = status.status === "queued" ? "Voice generation queued…" : "Generating narration audio…";
+  } else if (status?.status === "failed") {
+    if (providerStatus) {
+      const provider = status.provider === "elevenlabs" || status.error?.code?.startsWith("PROVIDER_") ? "ElevenLabs" : "Speech provider";
+      const httpStatus = status.error?.details?.status_code;
+      providerStatus.textContent = `${provider} request failed${httpStatus ? ` (HTTP ${httpStatus})` : ""}`;
+      providerStatus.className = "voice-provider-status error";
+    }
+    message.textContent = `${status.error?.code || "VOICE_GENERATION_FAILED"}: ${status.error?.message || "Narration audio could not be generated."}`;
+  } else if (status?.status === "stale") {
+    message.textContent = status.message || "Narration changed. Generate voice again to update the audio and timing.";
+  } else {
+    message.textContent = status?.message || "Create a script storyboard, then generate narration for its saved scene text.";
+  }
+  if (status?.status !== "ready" && !voicePreviewObjectUrl) {
+    player.pause();
+    player.removeAttribute("src");
+    player.hidden = true;
+    delete player.dataset.voiceUrl;
+  }
+  updateEditState();
+}
+
+async function refreshVoiceStatus() {
+  if (!currentJobId) return null;
+  try {
+    const status = await api(`/api/v1/jobs/${currentJobId}/voice`);
+    showVoiceStatus(status);
+    return status;
+  } catch (error) {
+    showVoiceStatus({ status: "failed", error: { code: error.code, message: error.message } });
+    return null;
+  }
+}
+
+async function generateVoice() {
+  if (!currentJobId || working) return;
+  if (scenes.some(sceneDirty)) {
+    const saved = await saveEdits();
+    if (!saved) return;
+  }
+  working = true;
+  updateEditState();
+  showNotice("");
+  showVoiceStatus({ status: "queued" });
+  try {
+    let status = await api(`/api/v1/jobs/${currentJobId}/voice`, { method: "POST" });
+    const statusUrl = status.status_url || `/api/v1/jobs/${currentJobId}/voice`;
+    while (status.status === "queued" || status.status === "running") {
+      showVoiceStatus(status);
+      await wait(350);
+      status = await api(statusUrl);
+    }
+    if (status.status === "failed") throw new Error(`${status.error?.code || "VOICE_GENERATION_FAILED"}: ${status.error?.message || "Retry voice generation."}`);
+    showVoiceStatus(status);
+    if (status.status === "ready") showNotice("");
+  } catch (error) {
+    showVoiceStatus({ status: "failed", error: { code: error.code, message: error.message } });
+    showNotice(error.message);
+  } finally {
+    working = false;
+    updateEditState();
+  }
 }
 
 async function regenerateVisual(scene) {
@@ -585,6 +852,55 @@ async function regenerateVisual(scene) {
   }
 }
 
+async function createOrRefreshDraftPreview() {
+  if (!currentJobId || working) return;
+  if (scenes.some(sceneDirty)) {
+    const saved = await saveEdits();
+    if (!saved) return;
+  }
+  working = true;
+  draftPreviewStatus = "running";
+  updateEditState();
+  showNotice("");
+  try {
+    const queued = await api(`/api/v1/jobs/${currentJobId}/draft-preview`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ aspect_ratio: selectedRatio }),
+    });
+    const statusUrl = queued.status_url || `/api/v1/jobs/${currentJobId}/draft-preview`;
+    let preview = queued;
+    while (preview.status === "queued" || preview.status === "running") {
+      await wait(700);
+      preview = await api(statusUrl);
+      if (currentJob) {
+        currentJob.draft_preview = preview;
+      }
+      draftPreviewStatus = preview.status;
+      updateEditState();
+    }
+    if (preview.status === "succeeded") {
+      draftPreviewResult = preview.result;
+      draftPreviewStatus = "succeeded";
+      draftPreviewRatio = preview.ratio || selectedRatio;
+      draftPreviewStale = false;
+      activePreviewView = "draft";
+      await loadCaptionsForPreview(preview.result);
+      showNotice("");
+    } else if (preview.status === "failed") {
+      draftPreviewStatus = "failed";
+      showNotice(`${preview.error?.code || "DRAFT_PREVIEW_FAILED"}: ${preview.error?.message || "Draft preview failed to render."}`);
+    }
+  } catch (error) {
+    draftPreviewStatus = "failed";
+    showNotice(error.message);
+  } finally {
+    working = false;
+    updateEditState();
+    syncMainPreview();
+  }
+}
+
 async function renderFullVideo() {
   if (!currentJobId || working) return;
   const saved = await saveEdits();
@@ -601,8 +917,34 @@ async function renderFullVideo() {
     working = false;
     updateEditState();
     await watchJob();
+    activePreviewView = "final";
+    syncMainPreview();
   } catch (error) { showNotice(error.message); }
   finally { working = false; updateEditState(); }
+}
+
+async function downloadAllCaptions() {
+  if (!currentJobId) {
+    showNotice("Create a storyboard with captions before downloading an SRT file.");
+    return;
+  }
+  try {
+    const response = await fetch(`/api/v1/jobs/${currentJobId}/captions.srt`);
+    if (!response.ok) {
+      const payload = await response.json().catch(() => null);
+      throw new Error(payload?.detail?.error?.message || "Captions are not available to download.");
+    }
+    const blob = await response.blob();
+    if (!blob.size) throw new Error("There are no saved captions to download.");
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "scenecraft-captions.srt";
+    link.click();
+    URL.revokeObjectURL(url);
+  } catch (error) {
+    showNotice(error.message);
+  }
 }
 
 form.addEventListener("submit", async (event) => {
@@ -636,6 +978,11 @@ form.addEventListener("submit", async (event) => {
     scenes = [];
     renderScenes();
     showResults(null);
+    draftPreviewResult = null;
+    draftPreviewStatus = null;
+    draftPreviewRatio = null;
+    draftPreviewStale = false;
+    activePreviewView = "draft";
     working = false;
     updateEditState();
     await watchJob();
@@ -666,15 +1013,33 @@ document.querySelector("#local-footage-form").addEventListener("submit", async (
 });
 
 audioInput.addEventListener("change", () => {
-  document.querySelector("#audio-name").textContent = audioInput.files[0] ? `${audioInput.files[0].name} · spoken words are not transcribed` : "Audio is not transcribed.";
+  const audio = document.querySelector("#voice-preview");
+  if (voicePreviewObjectUrl) URL.revokeObjectURL(voicePreviewObjectUrl);
+  voicePreviewObjectUrl = null;
+  if (audioInput.files[0]) {
+    voicePreviewObjectUrl = URL.createObjectURL(audioInput.files[0]);
+    audio.src = voicePreviewObjectUrl;
+    audio.hidden = false;
+    document.querySelector("#audio-name").textContent = `${audioInput.files[0].name} · spoken words are not transcribed`;
+    document.querySelector("#voice-status").textContent = "Uploaded audio preview · this file is used as supplied; speech is not transcribed.";
+  } else {
+    audio.pause();
+    audio.removeAttribute("src");
+    audio.hidden = true;
+    document.querySelector("#audio-name").textContent = "Audio is not transcribed.";
+    if (currentJobId) refreshVoiceStatus();
+  }
+  updateEditState();
 });
 document.querySelectorAll('input[name="aspect_ratio"]').forEach((input) => input.addEventListener("change", () => {
+  draftPreviewStale = Boolean(draftPreviewResult?.video || currentResult?.video);
   setRatioDisplay(ratioValue());
     selectedRatio = ratioValue();
     if (currentJobId) updateEditState();
 }));
 document.querySelector("#save-button").addEventListener("click", saveEdits);
 document.querySelector("#render-button").addEventListener("click", renderFullVideo);
+document.querySelector("#generate-voice-button")?.addEventListener("click", generateVoice);
 document.querySelector("#preview-video").addEventListener("loadeddata", () => {
   previewLoadError = false;
   document.querySelector("#preview-load-error").hidden = true;
@@ -693,4 +1058,16 @@ document.querySelector("#example-script").addEventListener("click", () => {
 });
 selectedRatio = ratioValue();
 setRatioDisplay(selectedRatio);
+document.querySelector("#draft-preview-button")?.addEventListener("click", createOrRefreshDraftPreview);
+document.querySelector("#download-all-captions")?.addEventListener("click", downloadAllCaptions);
+document.querySelector("#view-draft-tab")?.addEventListener("click", () => {
+  activePreviewView = "draft";
+  updateEditState();
+  syncMainPreview();
+});
+document.querySelector("#view-final-tab")?.addEventListener("click", () => {
+  activePreviewView = "final";
+  updateEditState();
+  syncMainPreview();
+});
 loadProviderInfo();

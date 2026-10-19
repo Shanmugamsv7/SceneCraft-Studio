@@ -3,6 +3,17 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from pathlib import Path
+from dotenv import load_dotenv
+
+
+PROJECT_ENV_FILE = Path(__file__).resolve().parent.parent / ".env"
+
+
+def load_project_environment(env_file: Path | None = None) -> bool:
+    """Load the ignored project-root .env without overriding process settings."""
+    if os.environ.get("SCENECRAFT_DISABLE_DOTENV", "").strip() == "1":
+        return False
+    return load_dotenv(dotenv_path=env_file or PROJECT_ENV_FILE, override=False)
 
 
 @dataclass(frozen=True)
@@ -44,16 +55,12 @@ def load_settings(environ: dict[str, str] | None = None) -> Settings:
     elevenlabs_api_key = values.get("ELEVENLABS_API_KEY", "").strip() or None
     elevenlabs_voice_id = values.get("ELEVENLABS_VOICE_ID", "").strip() or None
     elevenlabs_model_id = values.get("ELEVENLABS_MODEL_ID", "eleven_multilingual_v2").strip()
+    if not elevenlabs_model_id:
+        raise ValueError("ELEVENLABS_MODEL_ID must not be empty.")
     try:
         max_footage_bytes = int(values.get("MAX_FOOTAGE_BYTES", str(25 * 1024 * 1024)))
     except ValueError as exc:
         raise ValueError("MAX_FOOTAGE_BYTES must be an integer.") from exc
-    if provider == "pexels" and not pexels_api_key:
-        raise ValueError("BROLL_PROVIDER=pexels requires PEXELS_API_KEY. Add your Pexels API key to the server environment or untracked .env file, then restart.")
-    if provider == "wikimedia" and not wikimedia_contact:
-        raise ValueError("BROLL_PROVIDER=wikimedia requires WIKIMEDIA_CONTACT (a public URL or email for the API User-Agent; it is not an API key). Set it in the server environment or untracked .env file, then restart.")
-    if speech_provider == "elevenlabs" and not (elevenlabs_api_key and elevenlabs_voice_id):
-        raise ValueError("TTS_PROVIDER=elevenlabs requires ELEVENLABS_API_KEY and ELEVENLABS_VOICE_ID in the server environment or untracked .env file, then restart.")
     if max_footage_bytes < 1024:
         raise ValueError("MAX_FOOTAGE_BYTES must be at least 1024 bytes.")
     if max_upload_bytes <= 0:
@@ -89,4 +96,5 @@ def load_settings(environ: dict[str, str] | None = None) -> Settings:
     )
 
 
+load_project_environment()
 settings = load_settings()

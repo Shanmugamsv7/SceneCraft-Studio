@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import mimetypes
 import os
 import re
 import shutil
@@ -21,14 +22,14 @@ from typing import Any
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile, Body
 from fastapi import Header, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import JSONResponse
 from app.config import settings
 from app.pipeline import FRAME_RATE, allocate_scene_timings, allocate_scene_timings_by_duration, analyze_scene, caption_chunks, segment_script
-from app.providers import CommonsRequestLimiter, ElevenLabsSpeechProvider, FallbackFootageProvider, FootageProvider, LocalFootageLibraryProvider, MOCK_PROVIDER, PexelsFootageProvider, ProviderError, SceneVisual, WikimediaCommonsFootageProvider, WikimediaCommonsImageProvider
+from app.providers import CommonsRequestLimiter, ElevenLabsSpeechProvider, FallbackFootageProvider, FootageProvider, LocalFootageLibraryProvider, MOCK_PROVIDER, PexelsFootageProvider, ProviderError, SceneVisual, UnconfiguredFootageProvider, WikimediaCommonsFootageProvider
 
 ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = settings.data_dir
@@ -40,21 +41,41 @@ ALLOWED_FOOTAGE_EXTENSIONS = {".mp4", ".mov", ".m4v", ".webm", ".ogv", ".mkv"}
 RATIOS: dict[str, tuple[int, int]] = {"16:9": (1920, 1080), "9:16": (1080, 1920), "1:1": (1080, 1080)}
 LOCAL_FOOTAGE_PROVIDER = LocalFootageLibraryProvider(settings.local_footage_dir, settings.max_footage_bytes)
 if settings.provider == "pexels":
-    _primary_footage_provider: FootageProvider = PexelsFootageProvider(settings.pexels_api_key or "", DATA_DIR, settings.provider_timeout_seconds, settings.max_footage_bytes)
-    FOOTAGE_PROVIDER: FootageProvider = FallbackFootageProvider(_primary_footage_provider, LOCAL_FOOTAGE_PROVIDER)
+    if settings.pexels_api_key:
+        _primary_footage_provider: FootageProvider = PexelsFootageProvider(settings.pexels_api_key, DATA_DIR, settings.provider_timeout_seconds, settings.max_footage_bytes)
+        FOOTAGE_PROVIDER: FootageProvider = FallbackFootageProvider(_primary_footage_provider, LOCAL_FOOTAGE_PROVIDER)
+    else:
+        FOOTAGE_PROVIDER = UnconfiguredFootageProvider(
+            "pexels-unconfigured",
+            "videos-api-v1",
+            "Pexels footage is selected but PEXELS_API_KEY is missing. Add a valid PEXELS_API_KEY to the server environment or untracked .env file, then restart SceneCraft Studio. Demo graphics will not be used as footage.",
+        )
 elif settings.provider == "wikimedia":
-    _commons_request_limiter = CommonsRequestLimiter()
-    _primary_footage_provider = WikimediaCommonsFootageProvider(DATA_DIR, settings.wikimedia_contact or "", settings.provider_timeout_seconds, settings.max_footage_bytes, request_limiter=_commons_request_limiter)
-    _commons_image_provider = WikimediaCommonsImageProvider(DATA_DIR, settings.wikimedia_contact or "", settings.provider_timeout_seconds, settings.max_footage_bytes, request_limiter=_commons_request_limiter)
-    FOOTAGE_PROVIDER = FallbackFootageProvider(_primary_footage_provider, LOCAL_FOOTAGE_PROVIDER, _commons_image_provider)
+    if settings.wikimedia_contact:
+        _commons_request_limiter = CommonsRequestLimiter()
+        _primary_footage_provider = WikimediaCommonsFootageProvider(DATA_DIR, settings.wikimedia_contact, settings.provider_timeout_seconds, settings.max_footage_bytes, request_limiter=_commons_request_limiter)
+        # Commons mode intentionally offers video files only. Still images are
+        # not footage and must not be presented as a video fallback.
+        FOOTAGE_PROVIDER = FallbackFootageProvider(_primary_footage_provider, LOCAL_FOOTAGE_PROVIDER)
+    else:
+        FOOTAGE_PROVIDER = UnconfiguredFootageProvider(
+            "wikimedia-commons-unconfigured",
+            "mediawiki-action-api",
+            "Wikimedia Commons footage is selected but WIKIMEDIA_CONTACT is missing. Add a public contact URL or email for the Commons API User-Agent to the server environment or untracked .env file, then restart SceneCraft Studio. No still images or demo graphics will be substituted as footage.",
+        )
 elif settings.provider == "local":
     FOOTAGE_PROVIDER = LOCAL_FOOTAGE_PROVIDER
 else:
     FOOTAGE_PROVIDER = MOCK_PROVIDER
-SPEECH_PROVIDER = (
-    ElevenLabsSpeechProvider(settings.elevenlabs_api_key or "", settings.elevenlabs_voice_id or "", settings.elevenlabs_model_id, settings.provider_timeout_seconds)
-    if settings.speech_provider == "elevenlabs" else None
-)
+
+
+def _create_speech_provider(config: Any) -> ElevenLabsSpeechProvider | None:
+    if config.speech_provider != "elevenlabs" or not config.elevenlabs_api_key or not config.elevenlabs_voice_id:
+        return None
+    return ElevenLabsSpeechProvider(config.elevenlabs_api_key, config.elevenlabs_voice_id, config.elevenlabs_model_id, config.provider_timeout_seconds)
+
+
+SPEECH_PROVIDER = _create_speech_provider(settings)
 logger = logging.getLogger("scenecraft")
 correlation_context: contextvars.ContextVar[str] = contextvars.ContextVar("correlation_id", default="-")
 job_context: contextvars.ContextVar[str] = contextvars.ContextVar("job_id", default="-")
@@ -131,7 +152,7 @@ def _safe_provider_error_details(details: object) -> dict[str, str | int | float
     """Keep useful diagnostics without exposing arbitrary provider payloads."""
     if not isinstance(details, dict):
         return {}
-    allowed = {"status", "status_code", "retry_after", "retry_after_seconds", "attempt", "max_attempts", "exception_type", "orientation", "max_bytes"}
+    allowed = {"status", "status_code", "retry_after", "retry_after_seconds", "attempt", "max_attempts", "exception_type", "orientation", "max_bytes", "provider_error_code", "provider_error_type", "provider_request_id"}
     safe: dict[str, str | int | float | bool] = {}
     for key in allowed:
         value = details.get(key)
@@ -146,8 +167,8 @@ def _scene_response(scene: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in scene.items() if not key.startswith("_")}
 
 
-def _error(code: str, message: str, status_code: int, details: Any = None) -> HTTPException:
-    return HTTPException(status_code, {"error": {"code": code, "message": message, "retryable": False, "details": details}})
+def _error(code: str, message: str, status_code: int, details: Any = None, retryable: bool = False) -> HTTPException:
+    return HTTPException(status_code, {"error": {"code": code, "message": message, "retryable": retryable, "details": details}})
 
 
 def _ffmpeg_path() -> str | None:
@@ -206,9 +227,9 @@ async def unexpected_error_handler(request: Request, exc: Exception) -> JSONResp
     return JSONResponse(status_code=500, content=_error_body("INTERNAL_ERROR", "An unexpected server error occurred.", retryable=True))
 
 
-def _run(command: list[str], *, timeout: int = 120) -> subprocess.CompletedProcess[str]:
+def _run(command: list[str], *, timeout: int = 120, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
     try:
-        return subprocess.run(command, capture_output=True, text=True, timeout=timeout, check=True)
+        return subprocess.run(command, capture_output=True, text=True, timeout=timeout, check=True, cwd=cwd)
     except subprocess.CalledProcessError as exc:
         raise RuntimeError((exc.stderr or "FFmpeg command failed")[-2000:]) from exc
     except subprocess.TimeoutExpired as exc:
@@ -279,6 +300,59 @@ def _caption_cues(text: str, start: float, end: float) -> list[dict[str, Any]]:
 
 def _format_srt(cues: list[dict[str, Any]]) -> str:
     return "\n".join(f"{index}\n{_srt_timestamp(cue['start'])} --> {_srt_timestamp(cue['end'])}\n{cue['text']}\n" for index, cue in enumerate(cues, 1))
+
+
+def _ffmpeg_supports_subtitles(ffmpeg: str) -> bool:
+    """Return whether this FFmpeg build can render libass subtitles."""
+    filters = _run([ffmpeg, "-hide_banner", "-filters"], timeout=30)
+    return bool(re.search(r"^\s*\.\.\s+subtitles\s+V->V", filters.stdout, re.MULTILINE))
+
+
+def _burn_captions_into_video(ffmpeg: str, source: Path, captions: Path, output: Path, height: int) -> None:
+    """Render an SRT once into final video frames, retaining the existing audio."""
+    if not _ffmpeg_supports_subtitles(ffmpeg):
+        raise RuntimeError(
+            "This FFmpeg build cannot burn captions because its subtitles/libass filter is unavailable. "
+            "Install an FFmpeg build with --enable-libass, then rerender the final video."
+        )
+    if not captions.is_file() or captions.stat().st_size == 0:
+        raise RuntimeError("Final captions are missing; the caption-burned MP4 cannot be created.")
+    font_size = max(22, round(height * 0.045))
+    margin_v = max(28, round(height * 0.05))
+    style = (
+        f"FontName=Arial,FontSize={font_size},PrimaryColour=&H00FFFFFF,"
+        "OutlineColour=&HAA000000,BorderStyle=1,Outline=2,Shadow=0,Alignment=2,"
+        f"MarginV={margin_v}"
+    )
+    subtitle_filter = f"subtitles=filename='captions.srt':charenc=UTF-8:force_style='{style}'"
+    _run(
+        [
+            ffmpeg, "-y", "-hide_banner", "-loglevel", "error", "-i", str(source),
+            "-vf", subtitle_filter, "-map", "0:v:0", "-map", "0:a:0", "-c:v", "libx264",
+            "-preset", "medium", "-pix_fmt", "yuv420p", "-c:a", "copy", "-movflags", "+faststart", str(output),
+        ],
+        cwd=captions.parent,
+    )
+
+
+def _merged_scene_captions_srt(scenes: list[dict[str, Any]]) -> str:
+    """Build an SRT from the current saved scene text and absolute timeline."""
+    cues: list[dict[str, Any]] = []
+    seen: set[tuple[int, int, str]] = set()
+    for scene in sorted(scenes, key=lambda item: (float(item.get("start", 0)), float(item.get("end", 0)))):
+        text = str(scene.get("caption_text") or "").strip()
+        start, end = float(scene.get("start", 0)), float(scene.get("end", 0))
+        if not text or end <= start:
+            continue
+        for cue in _caption_cues(text, start, end):
+            # Suppress only an accidental exact duplicate. Identical words at
+            # distinct timestamps are legitimate captions and remain intact.
+            key = (round(cue["start"] * 1000), round(cue["end"] * 1000), cue["text"])
+            if key not in seen:
+                seen.add(key)
+                cues.append(cue)
+    cues.sort(key=lambda cue: (cue["start"], cue["end"], cue["text"]))
+    return _format_srt(cues) if cues else ""
 
 
 def _probe_render(path: Path) -> dict[str, Any]:
@@ -392,13 +466,18 @@ def _visual_options(scene_text: str, index: int, job_id: str, generation: int = 
         if visual.asset_path is not None:
             if not visual.asset_path.is_file():
                 raise ProviderError("PROVIDER_ASSET_MISSING", f"A provider visual file is missing: {visual.asset_id}", retryable=False)
-            _probe_footage(visual.asset_path, visual.asset_id)
+            if visual.media_type == "image":
+                _probe_image(visual.asset_path, visual.asset_id)
+            else:
+                _probe_footage(visual.asset_path, visual.asset_id)
     return options
 
 
 def _synthesize_scene(text: str, destination: Path) -> dict[str, str | None]:
     if SPEECH_PROVIDER is None:
-        raise ProviderError("TTS_NOT_CONFIGURED", "Natural narration is not configured. Set TTS_PROVIDER=elevenlabs with its server-side credentials, or use explicitly labelled mock mode.", retryable=False)
+        if settings.speech_provider == "elevenlabs":
+            raise ProviderError("TTS_NOT_CONFIGURED", "ElevenLabs narration is selected but not configured. Set ELEVENLABS_API_KEY and ELEVENLABS_VOICE_ID in the server environment or untracked .env file, then restart the server.", retryable=False)
+        raise ProviderError("TTS_NOT_CONFIGURED", "No text-to-speech provider is configured.", retryable=False)
     last_error: ProviderError | None = None
     for attempt in range(SPEECH_MAX_ATTEMPTS):
         attempt_path = destination.with_name(f"{destination.stem}.attempt-{attempt}{destination.suffix}")
@@ -423,6 +502,244 @@ def _synthesize_scene(text: str, destination: Path) -> dict[str, str | None]:
             raise last_error
         time.sleep(min(0.05 * (attempt + 1), PROVIDER_TIMEOUT_SECONDS / 4))
     raise last_error or ProviderError("PROVIDER_UNAVAILABLE", "The speech provider could not complete the request.", retryable=True)
+
+
+def _voice_cache_paths(job_id: str, scene_texts: list[str]) -> tuple[Path, str]:
+    provider = SPEECH_PROVIDER
+    provider_identity = {
+        "provider": getattr(provider, "name", "mock-local") if provider else "unconfigured-elevenlabs" if settings.speech_provider == "elevenlabs" else "mock-local",
+        "version": getattr(provider, "version", MOCK_PROVIDER.version) if provider else MOCK_PROVIDER.version,
+        "model": getattr(provider, "_model_id", None) if provider else None,
+        "voice_id": getattr(provider, "_voice_id", None) if provider else None,
+        "scenes": scene_texts,
+    }
+    digest = hashlib.sha256(json.dumps(provider_identity, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()
+    job_root = (DATA_DIR / job_id).resolve()
+    voice_dir = (job_root / "voice").resolve()
+    if voice_dir.parent != job_root:
+        raise RuntimeError("The narration cache path is outside the job directory.")
+    return voice_dir, digest
+
+
+def _prepare_speech_audio(job_id: str, scene_texts: list[str], scratch_dir: Path) -> dict[str, Any]:
+    """Create or reuse one measured narration track, caching speech per scene text."""
+    voice_dir, signature = _voice_cache_paths(job_id, scene_texts)
+    voice_dir.mkdir(parents=True, exist_ok=True)
+    output = voice_dir / f"narration-{signature}.wav"
+    provider = SPEECH_PROVIDER
+    if provider is None and settings.speech_provider == "elevenlabs":
+        raise ProviderError("TTS_NOT_CONFIGURED", "ElevenLabs narration is selected but credentials are missing. Set ELEVENLABS_API_KEY and ELEVENLABS_VOICE_ID in the server environment or untracked .env file, then restart the server.", retryable=False)
+
+    if provider is None:
+        duration = MOCK_PROVIDER.narration_duration(" ".join(scene_texts))
+        cached_output_valid = output.is_file() and output.stat().st_size > 0
+        if cached_output_valid:
+            try:
+                _probe_audio(output)
+            except RuntimeError:
+                cached_output_valid = False
+                output.unlink(missing_ok=True)
+        if not cached_output_valid:
+            ffmpeg = _ffmpeg_path()
+            if not ffmpeg:
+                raise RuntimeError("FFmpeg is unavailable; it is required to generate the labelled demo test tone.")
+            exact_duration = math.ceil(duration * FRAME_RATE) / FRAME_RATE
+            temporary = scratch_dir / "mock_narration.wav"
+            _run([ffmpeg, "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=44100", "-t", f"{exact_duration:.9f}", "-c:a", "pcm_s16le", str(temporary)])
+            _probe_audio(temporary)
+            os.replace(temporary, output)
+        metadata = {"provider": MOCK_PROVIDER.name, "model": MOCK_PROVIDER.version, "voice_id": None, "mode": "demo_test_tone"}
+        return {"path": output, "duration": _probe_audio(output)[0], "scene_durations": None, "metadata": metadata, "provider": MOCK_PROVIDER.speech_label, "signature": signature}
+
+    ffmpeg = _ffmpeg_path()
+    if not ffmpeg:
+        raise RuntimeError("FFmpeg is unavailable; it is required to normalize generated narration.")
+    provider_fingerprint = hashlib.sha256(json.dumps({
+        "provider": getattr(provider, "name", "elevenlabs"),
+        "version": getattr(provider, "version", "text-to-speech-v1"),
+        "model": getattr(provider, "_model_id", None),
+        "voice_id": getattr(provider, "_voice_id", None),
+    }, sort_keys=True).encode("utf-8")).hexdigest()[:16]
+    segment_wavs: list[Path] = []
+    segment_durations: list[float] = []
+    segment_metadata: list[dict[str, Any]] = []
+    for index, text in enumerate(scene_texts):
+        text_digest = hashlib.sha256(text.encode("utf-8")).hexdigest()[:24]
+        # A scene's audio is reusable only when both its text and the configured
+        # speech provider/voice/model match. The aggregate signature also
+        # includes the complete scene list, but individual segments need this
+        # narrower key so editing one scene can safely reuse the others.
+        stem = f"scene-{index + 1:03}-{provider_fingerprint}-{text_digest}"
+        mp3_path = voice_dir / f"{stem}.mp3"
+        wav_path = voice_dir / f"{stem}.wav"
+        metadata_path = voice_dir / f"{stem}.json"
+        valid_mp3 = mp3_path.is_file() and mp3_path.stat().st_size > 0
+        if valid_mp3:
+            try:
+                _probe_audio(mp3_path)
+            except RuntimeError:
+                mp3_path.unlink(missing_ok=True)
+                wav_path.unlink(missing_ok=True)
+                metadata_path.unlink(missing_ok=True)
+                valid_mp3 = False
+        if not valid_mp3:
+            meta = _synthesize_scene(text, mp3_path)
+            metadata_path.write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
+        else:
+            try:
+                meta = json.loads(metadata_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                meta = {"provider": getattr(provider, "name", "elevenlabs"), "model": getattr(provider, "_model_id", None), "voice_id": getattr(provider, "_voice_id", None)}
+        cached_wav_valid = wav_path.is_file() and wav_path.stat().st_size > 0
+        if cached_wav_valid:
+            try:
+                _probe_audio(wav_path)
+            except RuntimeError:
+                cached_wav_valid = False
+                wav_path.unlink(missing_ok=True)
+        if not cached_wav_valid:
+            temporary_wav = scratch_dir / f"speech-{index + 1:03}.wav"
+            _run([ffmpeg, "-y", "-hide_banner", "-loglevel", "error", "-i", str(mp3_path), "-vn", "-ac", "1", "-ar", "44100", "-c:a", "pcm_s16le", str(temporary_wav)])
+            _probe_audio(temporary_wav)
+            os.replace(temporary_wav, wav_path)
+        segment_durations.append(_probe_audio(wav_path)[0])
+        segment_wavs.append(wav_path)
+        segment_metadata.append(meta if isinstance(meta, dict) else {})
+
+    cached_output_valid = output.is_file() and output.stat().st_size > 0
+    if cached_output_valid:
+        try:
+            _probe_audio(output)
+        except RuntimeError:
+            cached_output_valid = False
+            output.unlink(missing_ok=True)
+    if not cached_output_valid:
+        scratch_segments: list[Path] = []
+        for index, segment in enumerate(segment_wavs):
+            scratch_segment = scratch_dir / f"concat-{index + 1:03}.wav"
+            shutil.copyfile(segment, scratch_segment)
+            scratch_segments.append(scratch_segment)
+        concat_list = scratch_dir / "narration-segments.txt"
+        concat_list.write_text("".join(f"file '{path.name}'\n" for path in scratch_segments), encoding="utf-8")
+        temporary_output = scratch_dir / "narration.wav"
+        _run([ffmpeg, "-y", "-hide_banner", "-loglevel", "error", "-f", "concat", "-safe", "0", "-i", str(concat_list), "-vn", "-ac", "1", "-ar", "44100", "-c:a", "pcm_s16le", str(temporary_output)])
+        _probe_audio(temporary_output)
+        os.replace(temporary_output, output)
+    duration = _probe_audio(output)[0]
+    provider_meta = {
+        "name": getattr(provider, "name", "elevenlabs"),
+        "version": getattr(provider, "version", "text-to-speech-v1"),
+        "model": getattr(provider, "_model_id", None),
+        "voice_id": getattr(provider, "_voice_id", None),
+        "segments": segment_metadata,
+    }
+    return {"path": output, "duration": duration, "scene_durations": segment_durations, "metadata": provider_meta, "provider": getattr(provider, "name", "elevenlabs"), "signature": signature}
+
+
+def _voice_result(job_id: str, prepared: dict[str, Any]) -> dict[str, Any]:
+    metadata = prepared["metadata"]
+    is_demo = str(prepared["provider"]).startswith("mock")
+    voice_id = metadata.get("voice_id") if isinstance(metadata, dict) else None
+    return {
+        "status": "ready",
+        "signature": prepared["signature"],
+        "provider": prepared["provider"],
+        "voice_id": voice_id,
+        "mode": "demo_test_tone" if is_demo else "generated_speech",
+        "label": "DEMO - 440 Hz test tone, not speech" if is_demo else "Generated speech narration",
+        "duration_seconds": round(float(prepared["duration"]), 6),
+        "timing_strategy": "measured per-scene audio duration" if prepared["scene_durations"] else "mock tone duration with narration-weighted scene timing",
+        "audio_url": f"/api/v1/jobs/{job_id}/voice/audio?signature={prepared['signature']}",
+    }
+
+
+def _voice_status(job_id: str, job: dict[str, Any]) -> dict[str, Any]:
+    if job.get("voice_input_type") == "user_upload":
+        return {"status": "uploaded", "provider": "user-upload", "label": "Uploaded voice-over is used as supplied; speech is not transcribed."}
+    texts = [scene.get("narration_text", "") for scene in job.get("scenes", [])]
+    if not texts or any(not text for text in texts):
+        return {"status": "not_ready", "provider": settings.speech_provider, "message": "Create a script storyboard before generating voice narration."}
+    voice_dir, signature = _voice_cache_paths(job_id, texts)
+    stored = job.get("voice_generation") or {}
+    if stored.get("signature") == signature and stored.get("status") in {"queued", "running", "failed"}:
+        return {key: value for key, value in stored.items() if key != "signature"} | {"signature": signature}
+    expected = voice_dir / f"narration-{signature}.wav"
+    if expected.is_file() and expected.stat().st_size > 0:
+        try:
+            duration = _probe_audio(expected)[0]
+            if stored.get("signature") == signature and stored.get("status") == "ready":
+                return dict(stored)
+            provider = SPEECH_PROVIDER
+            metadata: dict[str, Any] = ({"provider": getattr(provider, "name", "elevenlabs"), "model": getattr(provider, "_model_id", None), "voice_id": getattr(provider, "_voice_id", None)} if provider else {"provider": MOCK_PROVIDER.name, "model": MOCK_PROVIDER.version, "voice_id": None})
+            return _voice_result(job_id, {"path": expected, "duration": duration, "scene_durations": [] if provider else None, "metadata": metadata, "provider": metadata["provider"], "signature": signature})
+        except RuntimeError:
+            expected.unlink(missing_ok=True)
+    if stored.get("status") == "ready":
+        return {"status": "stale", "provider": stored.get("provider"), "message": "Narration changed. Generate voice again to update the saved audio and scene timing."}
+    if stored.get("status") == "stale":
+        return {key: value for key, value in stored.items() if key != "signature"} | {"status": "stale"}
+    return {"status": "not_generated", "provider": "elevenlabs" if settings.speech_provider == "elevenlabs" else MOCK_PROVIDER.name, "message": "Generate narration to create audio for the current saved scene text."}
+
+
+def _generate_voice_task(job_id: str, signature: str) -> None:
+    job_dir = DATA_DIR / job_id
+    scratch_dir = job_dir / ".voice-rendering"
+    scratch_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        with jobs_lock:
+            job = jobs.get(job_id)
+            if not job:
+                return
+            texts = [scene.get("narration_text", "") for scene in job.get("scenes", [])]
+            if _voice_cache_paths(job_id, texts)[1] != signature:
+                job["voice_generation"] = {"status": "stale", "message": "Scene narration changed before voice generation began."}
+                return
+            job["voice_generation"] = {
+                "status": "running",
+                "progress": 5,
+                "signature": signature,
+                "provider": getattr(SPEECH_PROVIDER, "name", settings.speech_provider),
+            }
+        prepared = _prepare_speech_audio(job_id, texts, scratch_dir)
+        result = _voice_result(job_id, prepared)
+        if prepared["scene_durations"]:
+            timings = allocate_scene_timings_by_duration(texts, prepared["scene_durations"])
+        else:
+            frames = max(1, math.ceil(prepared["duration"] * FRAME_RATE))
+            timings = allocate_scene_timings(texts, frames)
+        with jobs_lock:
+            job = jobs.get(job_id)
+            if not job:
+                return
+            current_texts = [scene.get("narration_text", "") for scene in job.get("scenes", [])]
+            if _voice_cache_paths(job_id, current_texts)[1] != signature:
+                job["voice_generation"] = {"status": "stale", "message": "Scene narration changed while voice generation was running. Generate narration again for the latest saved text."}
+                return
+            for scene, timing in zip(job.get("scenes", []), timings):
+                scene.update(start=round(timing.start, 6), end=round(timing.end, 6), duration=round(timing.end - timing.start, 6))
+            job["voice_generation"] = result
+            job["dirty"] = True
+    except ProviderError as exc:
+        details = _safe_provider_error_details(exc.details)
+        logger.warning(
+            "speech provider request failed code=%s retryable=%s status_code=%s provider_error_code=%s message=%s",
+            exc.code,
+            exc.retryable,
+            details.get("status_code", "-"),
+            details.get("provider_error_code", "-"),
+            str(exc),
+            extra={"job_id": job_id},
+        )
+        with jobs_lock:
+            if job_id in jobs:
+                jobs[job_id]["voice_generation"] = {"status": "failed", "signature": signature, "provider": getattr(SPEECH_PROVIDER, "name", settings.speech_provider), "error": {"code": exc.code, "message": str(exc), "retryable": exc.retryable, "details": details}}
+    except Exception as exc:
+        logger.exception("voice generation failed")
+        with jobs_lock:
+            if job_id in jobs:
+                jobs[job_id]["voice_generation"] = {"status": "failed", "signature": signature, "provider": getattr(SPEECH_PROVIDER, "name", settings.speech_provider), "error": {"code": "VOICE_GENERATION_FAILED", "message": "Narration audio could not be prepared. Check the provider response and FFmpeg installation, then retry.", "retryable": False, "details": {"exception_type": type(exc).__name__}}}
+    finally:
+        shutil.rmtree(scratch_dir, ignore_errors=True)
 
 
 def _materialize_visual(visual: SceneVisual, job_id: str) -> SceneVisual:
@@ -550,7 +867,7 @@ def _verify_required_artifacts(job_id: str, job_dir: Path, ratio: str, expected_
         raise RuntimeError("The final video is missing a required H.264 or AAC stream.")
 
 
-def _render(job_id: str, script: str, ratio: str, audio_path: Path | None, correlation_id: str, edited_scenes: list[dict[str, Any]] | None = None, draft_preview: bool = False) -> None:
+def _render(job_id: str, script: str, ratio: str, audio_path: Path | None, correlation_id: str, edited_scenes: list[dict[str, Any]] | None = None, draft_preview: bool = False, parent_job_id: str | None = None) -> None:
     job_dir = DATA_DIR / job_id
     render_dir = job_dir / ".rendering"
     render_dir.mkdir(parents=True, exist_ok=True)
@@ -561,9 +878,16 @@ def _render(job_id: str, script: str, ratio: str, audio_path: Path | None, corre
     uploaded_audio = audio_path is not None
     public_scenes: list[dict[str, Any]] = []
     visual_catalog: dict[str, list[SceneVisual]] = {}
+
+    def _sync_parent_progress(prog: int, stat: str = "running") -> None:
+        if parent_job_id and parent_job_id in jobs and "draft_preview" in jobs[parent_job_id]:
+            jobs[parent_job_id]["draft_preview"]["status"] = stat
+            jobs[parent_job_id]["draft_preview"]["progress"] = prog
+
     try:
         with jobs_lock:
             jobs[job_id].update(status="running", progress=5)
+            _sync_parent_progress(5)
         logger.info("job started")
         ffmpeg = _ffmpeg_path()
         if not ffmpeg:
@@ -582,38 +906,29 @@ def _render(job_id: str, script: str, ratio: str, audio_path: Path | None, corre
             voice_source = "user_upload"
             caption_texts = ([scene["caption_text"] for scene in edited_scenes] if edited_scenes is not None else ["Transcript unavailable: uploaded voice-over"])
             source_audio_duration = duration
-        elif SPEECH_PROVIDER is not None:
-            caption_texts = [scene["caption_text"] for scene in edited_scenes] if edited_scenes is not None else list(scenes)
-            speech_segments: list[Path] = []
-            tts_scene_durations = []
-            speech_metadata = None
-            for index, scene_text in enumerate(scenes):
-                mp3_path = render_dir / f"speech_{index:03}.mp3"
-                wav_path = render_dir / f"speech_{index:03}.wav"
-                speech_metadata = _synthesize_scene(scene_text, mp3_path)
-                _run([ffmpeg, "-y", "-hide_banner", "-loglevel", "error", "-i", str(mp3_path), "-vn", "-ac", "1", "-ar", "44100", "-c:a", "pcm_s16le", str(wav_path)])
-                segment_duration, _ = _probe_audio(wav_path)
-                tts_scene_durations.append(segment_duration)
-                speech_segments.append(wav_path)
-                with jobs_lock:
-                    jobs[job_id]["progress"] = 5 + int(10 * (index + 1) / len(scenes))
-            concat_audio_list = render_dir / "speech_segments.txt"
-            concat_audio_list.write_text("".join(f"file '{path.name}'\n" for path in speech_segments), encoding="utf-8")
-            audio_path = render_dir / "narration.wav"
-            _run([ffmpeg, "-y", "-hide_banner", "-loglevel", "error", "-f", "concat", "-safe", "0", "-i", str(concat_audio_list), "-vn", "-ac", "1", "-ar", "44100", "-c:a", "pcm_s16le", str(audio_path)])
-            duration, _ = _probe_audio(audio_path)
-            voice_source = str((speech_metadata or {}).get("provider") or SPEECH_PROVIDER.name)
-            source_audio_duration = duration
         else:
-            duration = MOCK_PROVIDER.narration_duration(" ".join(scenes) if edited_scenes is not None else script)
-            voice_source = MOCK_PROVIDER.speech_label
             caption_texts = ([scene["caption_text"] for scene in edited_scenes] if edited_scenes is not None else scenes)
+            owner_job_id = parent_job_id or job_id
+            prepared = _prepare_speech_audio(owner_job_id, scenes, render_dir)
+            audio_path = prepared["path"]
+            duration = prepared["duration"]
+            tts_scene_durations = prepared["scene_durations"]
+            speech_metadata = prepared["metadata"]
+            voice_source = prepared["provider"]
             source_audio_duration = duration
+            voice_generation = _voice_result(owner_job_id, prepared)
+            with jobs_lock:
+                if owner_job_id in jobs:
+                    jobs[owner_job_id]["voice_generation"] = voice_generation
+            for index in range(len(scenes)):
+                with jobs_lock:
+                    prog = 5 + int(10 * (index + 1) / len(scenes))
+                    jobs[job_id]["progress"] = prog
+                    _sync_parent_progress(prog)
         total_frames = max(1, math.ceil(duration * FRAME_RATE))
         render_duration = total_frames / FRAME_RATE
         if not audio_path:
-            _run([ffmpeg, "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=44100", "-t", f"{render_duration:.9f}", "-c:a", "pcm_s16le", str(render_dir / "mock_narration.wav")])
-            audio_path = render_dir / "mock_narration.wav"
+            raise RuntimeError("Narration audio was not prepared for rendering.")
 
         timings = allocate_scene_timings_by_duration(scenes, tts_scene_durations) if tts_scene_durations else allocate_scene_timings(scenes, total_frames)
         timeline: list[dict[str, Any]] = []
@@ -661,7 +976,9 @@ def _render(job_id: str, script: str, ratio: str, audio_path: Path | None, corre
                         "visual_decision": "rejected", "scene_analysis": scene_analysis, "error": detail,
                     })
                     with jobs_lock:
-                        jobs[job_id]["progress"] = 10 + int(45 * (index + 1) / len(scenes))
+                        prog = 10 + int(45 * (index + 1) / len(scenes))
+                        jobs[job_id]["progress"] = prog
+                        _sync_parent_progress(prog)
                     continue
                 if visual.download_url and visual.asset_path is None:
                     try:
@@ -709,7 +1026,9 @@ def _render(job_id: str, script: str, ratio: str, audio_path: Path | None, corre
                     unavailable_scenes.append(detail)
                     public_scenes.append({"scene_id": scene_id, "narration_text": scene_text, "caption_text": caption_text, "start": round(start, 6), "end": round(end, 6), "duration": round(end - start, 6), "selected_visual_id": None, "selected_visual": None, "visual_options": [], "visual_decision": "rejected", "scene_analysis": scene_analysis, "error": detail})
                     with jobs_lock:
-                        jobs[job_id]["progress"] = 10 + int(45 * (index + 1) / len(scenes))
+                        prog = 10 + int(45 * (index + 1) / len(scenes))
+                        jobs[job_id]["progress"] = prog
+                        _sync_parent_progress(prog)
                     continue
             visual_catalog[scene_id] = options
             selected_asset_ids.add(visual.asset_id)
@@ -735,7 +1054,9 @@ def _render(job_id: str, script: str, ratio: str, audio_path: Path | None, corre
             timeline.append({"scene_id": scene_id, "index": index + 1, "narration_text": scene_text if voice_source != "user_upload" or edited_scenes is not None else None, "caption_text": caption_text, "caption_segments": scene_cues, "scene_analysis": scene_analysis, "start": round(start, 6), "end": round(end, 6), "start_frame": scene_timing.start_frame, "end_frame": scene_timing.end_frame, "clip": visual.asset_id, "provider": visual.provider, "media_type": visual.media_type, "source": visual.source, "license": visual.license, "license_verified": visual.license_verified, "rights_basis": visual.rights_basis, "attribution": visual.attribution, "source_url": visual.source_url, "ai_generated": visual.ai_generated, "selection_reason": visual.selection_reason, "relevance_score": visual.relevance_score, "keyword_overlap_score": visual.keyword_overlap_score, "visual_decision": visual_decision, "visual_options": [_visual_details(item) for item in options], "warnings": warnings})
             public_scenes.append({"scene_id": scene_id, "narration_text": scene_text, "caption_text": caption_text, "caption_segments": scene_cues, "scene_analysis": scene_analysis, "start": round(start, 6), "end": round(end, 6), "duration": round(end - start, 6), "selected_visual_id": visual.asset_id, "selected_visual": _visual_details(visual), "visual_options": [_visual_details(item) for item in options], "visual_decision": visual_decision})
             with jobs_lock:
-                jobs[job_id]["progress"] = 10 + int(45 * (index + 1) / len(scenes))
+                prog = 10 + int(45 * (index + 1) / len(scenes))
+                jobs[job_id]["progress"] = prog
+                _sync_parent_progress(prog)
 
         if unavailable_scenes:
             names = ", ".join(f"Scene {item['index']}" for item in unavailable_scenes)
@@ -753,15 +1074,12 @@ def _render(job_id: str, script: str, ratio: str, audio_path: Path | None, corre
         joined = render_dir / "joined.mp4"
         _run([ffmpeg, "-y", "-hide_banner", "-loglevel", "error", "-f", "concat", "-safe", "0", "-i", str(concat_file), "-c", "copy", str(joined)])
         output = render_dir / f"video_{ratio.replace(':', 'x')}.mp4"
-        _run([ffmpeg, "-y", "-hide_banner", "-loglevel", "error", "-i", str(joined), "-i", str(audio_path), "-map", "0:v:0", "-map", "1:a:0", "-af", "apad", "-t", f"{render_duration:.9f}", "-c:v", "copy", "-c:a", "aac", "-movflags", "+faststart", str(output)])
-        probe = _probe_render(output)
-        if probe["video"].get("codec_name") != "h264" or probe["audio"].get("codec_name") != "aac":
-            raise RuntimeError("The rendered file did not contain the required H.264 video and AAC audio streams.")
-        if (int(probe["video"].get("width", 0)), int(probe["video"].get("height", 0))) != (width, height):
-            raise RuntimeError("The rendered video dimensions did not match the selected aspect ratio.")
-        actual_duration = probe["duration"]
+        muxed_output = render_dir / "muxed.mp4"
+        _run([ffmpeg, "-y", "-hide_banner", "-loglevel", "error", "-i", str(joined), "-i", str(audio_path), "-map", "0:v:0", "-map", "1:a:0", "-af", "apad", "-t", f"{render_duration:.9f}", "-c:v", "copy", "-c:a", "aac", "-movflags", "+faststart", str(muxed_output)])
+        mux_probe = _probe_render(muxed_output)
+        actual_duration = mux_probe["duration"]
         try:
-            rendered_rate = float(Fraction(probe["video"]["avg_frame_rate"]))
+            rendered_rate = float(Fraction(mux_probe["video"]["avg_frame_rate"]))
         except (KeyError, ValueError, ZeroDivisionError) as exc:
             raise RuntimeError("FFprobe could not verify the rendered frame rate.") from exc
         if abs(rendered_rate - FRAME_RATE) > 0.001:
@@ -780,7 +1098,29 @@ def _render(job_id: str, script: str, ratio: str, audio_path: Path | None, corre
             caption_cues[-1]["end"] = actual_duration
             timeline[-1]["caption_segments"][-1]["end"] = final_end
             public_scenes[-1]["caption_segments"][-1]["end"] = final_end
-        (render_dir / "captions.srt").write_text(_format_srt(caption_cues), encoding="utf-8")
+        captions_path = render_dir / "captions.srt"
+        captions_path.write_text(_format_srt(caption_cues), encoding="utf-8")
+        # Draft MP4s retain a separate native preview track. Only the final
+        # downloadable export is burned in, so the preview never paints the
+        # same generated cue twice.
+        if edited_scenes is not None and not draft_preview:
+            _burn_captions_into_video(ffmpeg, muxed_output, captions_path, output, height)
+        else:
+            os.replace(muxed_output, output)
+        probe = _probe_render(output)
+        if probe["video"].get("codec_name") != "h264" or probe["audio"].get("codec_name") != "aac":
+            raise RuntimeError("The rendered file did not contain the required H.264 video and AAC audio streams.")
+        if (int(probe["video"].get("width", 0)), int(probe["video"].get("height", 0))) != (width, height):
+            raise RuntimeError("The rendered video dimensions did not match the selected aspect ratio.")
+        burned_duration = probe["duration"]
+        try:
+            burned_rate = float(Fraction(probe["video"]["avg_frame_rate"]))
+        except (KeyError, ValueError, ZeroDivisionError) as exc:
+            raise RuntimeError("FFprobe could not verify the caption-burned frame rate.") from exc
+        if abs(burned_rate - FRAME_RATE) > 0.001:
+            raise RuntimeError(f"Burning captions changed the final frame rate to {burned_rate:g} fps.")
+        if abs(burned_duration - actual_duration) > 0.001:
+            raise RuntimeError("Burning captions changed the final video duration.")
         (render_dir / "timeline.json").write_text(json.dumps({"duration_seconds": final_end, "frame_rate": FRAME_RATE, "scenes": timeline}, indent=2), encoding="utf-8")
         real_footage_used = any(scene["provider"] != MOCK_PROVIDER.name for scene in timeline)
         mock_footage_used = any(scene["provider"] == MOCK_PROVIDER.name for scene in timeline)
@@ -788,14 +1128,14 @@ def _render(job_id: str, script: str, ratio: str, audio_path: Path | None, corre
         manifest = {
             "job_id": job_id,
             "provider": {"speech": voice_source, "speech_details": speech_metadata or ({"name": MOCK_PROVIDER.name, "version": MOCK_PROVIDER.version} if voice_source.startswith("mock") else {"name": "user-upload", "version": None}), "footage": {"name": FOOTAGE_PROVIDER.name, "version": FOOTAGE_PROVIDER.version}},
-            "settings": {"aspect_ratio": ratio, "resolution": f"{width}x{height}", "frame_rate": FRAME_RATE, "video_codec": "H.264", "audio_codec": "AAC", "seed": None, "selection": "Deterministic order; no random seed used"},
+            "settings": {"aspect_ratio": ratio, "resolution": f"{width}x{height}", "frame_rate": FRAME_RATE, "video_codec": "H.264", "audio_codec": "AAC", "captions": "burned_into_final_mp4" if edited_scenes is not None and not draft_preview else "external_preview_track", "seed": None, "selection": "Deterministic order; no random seed used"},
             "timings": {"source_audio_duration_seconds": round(source_audio_duration, 6), "rendered_duration_seconds": final_end, "av_duration_drift_seconds": round(final_end - source_audio_duration, 6), "processing_seconds": round(time.monotonic() - started_at, 3)},
             "cost": {"status": "not_measured_provider_usage_only" if speech_metadata else "unavailable_no_paid_provider", "amount": None, "currency": None},
             "warnings": (["Generated color visuals are mock graphics, not genuine footage or stock media."] if mock_footage_used else []) + (["Pexels API-ranked media is not independently relevance-scored; review third-party model, property, and trademark rights."] if any(scene["provider"] == "pexels" for scene in timeline) else []) + (["Wikimedia Commons search ranking is not an independent relevance score; review uploader licensing data and third-party rights."] if any(scene["provider"] == "wikimedia-commons" for scene in timeline) else []) + (["Local clip rights are operator-declared and were not independently verified."] if user_declared_assets else []) + (["Mock narration is a 440 Hz test tone, not speech or real TTS."] if voice_source.startswith("mock") else (["Uploaded audio was not transcribed; captions report transcript unavailability."] if voice_source == "user_upload" else [])),
             "rights": {"status": "user_declared_local_media_review_required" if user_declared_assets else "third_party_license_metadata_review_required" if real_footage_used else "generated_mock_only", "third_party_media_used": any(scene["provider"] not in {MOCK_PROVIDER.name, "local-library"} for scene in timeline), "unverified_assets_used": user_declared_assets, "policy": "User-supplied clip license and attribution fields are an operator declaration and have not been independently verified." if user_declared_assets else "Commons/Pexels file metadata is preserved, but source license claims and model, property, trademark, and other third-party rights must be reviewed." if real_footage_used else "Generated mock visuals only; no third-party media used."},
             "assets": [{"asset_id": scene["clip"], "media_type": scene["media_type"], "source": scene["source"], "source_url": scene["source_url"], "license": scene["license"], "license_verified": scene["license_verified"], "rights_basis": scene["rights_basis"], "attribution": scene["attribution"], "ai_generated": scene["ai_generated"], "selection_reason": scene["selection_reason"], "relevance_score": scene["relevance_score"], "keyword_overlap_score": scene["keyword_overlap_score"]} for scene in timeline],
             "warnings_detail": [warning for scene in timeline for warning in scene["warnings"]],
-            "measured_output": {"duration_seconds": actual_duration, "video": probe["video"], "audio": probe["audio"]},
+            "measured_output": {"duration_seconds": burned_duration, "video": probe["video"], "audio": probe["audio"]},
         }
         (render_dir / "manifest.json").write_text(json.dumps(manifest, indent=2), encoding="utf-8")
         _verify_required_artifacts(job_id, render_dir, ratio, final_end)
@@ -803,7 +1143,15 @@ def _render(job_id: str, script: str, ratio: str, audio_path: Path | None, corre
         for artifact_name in artifact_names:
             os.replace(render_dir / artifact_name, job_dir / artifact_name)
         with jobs_lock:
-            jobs[job_id].update(status="succeeded", progress=100, render_kind="draft" if draft_preview or edited_scenes is None else "final", scenes=public_scenes, _visual_catalog=visual_catalog, _ratio=ratio, dirty=False, result={"video": f"/api/v1/jobs/{job_id}/artifacts/{output.name}", "captions": f"/api/v1/jobs/{job_id}/artifacts/captions.srt", "timeline": f"/api/v1/jobs/{job_id}/artifacts/timeline.json", "manifest": f"/api/v1/jobs/{job_id}/artifacts/manifest.json"})
+            result_payload = {"video": f"/api/v1/jobs/{job_id}/artifacts/{output.name}", "captions": f"/api/v1/jobs/{job_id}/artifacts/captions.srt", "timeline": f"/api/v1/jobs/{job_id}/artifacts/timeline.json", "manifest": f"/api/v1/jobs/{job_id}/artifacts/manifest.json"}
+            jobs[job_id].update(status="succeeded", progress=100, render_kind="draft" if draft_preview or edited_scenes is None else "final", scenes=public_scenes, _visual_catalog=visual_catalog, _ratio=ratio, dirty=False, result=result_payload)
+            if parent_job_id and parent_job_id in jobs and "draft_preview" in jobs[parent_job_id]:
+                jobs[parent_job_id]["draft_preview"].update({
+                    "status": "succeeded",
+                    "progress": 100,
+                    "result": result_payload,
+                    "error": None,
+                })
         succeeded = True
         logger.info("job succeeded")
     except BaseException as exc:
@@ -816,20 +1164,40 @@ def _render(job_id: str, script: str, ratio: str, audio_path: Path | None, corre
                     message = str(exc) if isinstance(exc, Exception) else "The background render was interrupted."
                     error = {"code": error_code, "message": message or "The background render failed.", "retryable": False, "details": None}
                 jobs[job_id].update(status="failed", progress=100, error=error, result=None)
-                if public_scenes:
+                if parent_job_id and parent_job_id in jobs and "draft_preview" in jobs[parent_job_id]:
+                    jobs[parent_job_id]["draft_preview"].update({
+                        "status": "failed",
+                        "progress": 100,
+                        "error": error,
+                        "result": None,
+                    })
+                if public_scenes and not draft_preview:
                     jobs[job_id].update(scenes=public_scenes, _visual_catalog=visual_catalog, _ratio=ratio, dirty=True)
         logger.error("job failed error_type=%s", type(exc).__name__)
     finally:
         shutil.rmtree(render_dir, ignore_errors=True)
-        if not succeeded and not edited_scenes:
+        if not succeeded and edited_scenes is None and not draft_preview:
+            # This initial attempt owns its generated narration cache. Edited
+            # rerenders and child draft previews can reuse a valid parent cache.
+            shutil.rmtree(job_dir / "voice", ignore_errors=True)
+        if not succeeded and not edited_scenes and not draft_preview:
             if not public_scenes:
                 shutil.rmtree(job_dir / ".provider-assets", ignore_errors=True)
                 for original_audio in job_dir.glob("source_audio.*"):
                     original_audio.unlink(missing_ok=True)
         if not succeeded:
-            if edited_scenes is None:
+            if edited_scenes is None or draft_preview:
                 for name in ("video_16x9.mp4", "video_9x16.mp4", "video_1x1.mp4", "captions.srt", "timeline.json", "manifest.json"):
                     (job_dir / name).unlink(missing_ok=True)
+            # Empty scratch subdirectories are safe to remove, but preserve any
+            # non-empty assets belonging to this failed job for scene review.
+            for directory, _, _ in os.walk(job_dir, topdown=False, followlinks=False):
+                path = Path(directory)
+                if path != job_dir:
+                    try:
+                        path.rmdir()
+                    except OSError:
+                        pass
         job_context.reset(job_token)
         correlation_context.reset(correlation_token)
 
@@ -856,10 +1224,12 @@ def provider_information() -> dict[str, Any]:
     footage = FOOTAGE_PROVIDER.name
     speech = "user-upload" if settings.speech_provider == "elevenlabs" else "mock-sine-test-tone"
     if settings.speech_provider == "elevenlabs":
-        speech = SPEECH_PROVIDER.name
+        speech = SPEECH_PROVIDER.name if SPEECH_PROVIDER else "elevenlabs-unconfigured"
     mock_footage = footage == "mock-local"
+    footage_configured = not footage.endswith("-unconfigured")
     mock_speech = speech == "mock-sine-test-tone"
-    mode = "demo" if mock_footage and mock_speech else "real" if not mock_footage and not mock_speech else "mixed"
+    speech_configured = settings.speech_provider == "mock" or SPEECH_PROVIDER is not None
+    mode = "unconfigured" if not footage_configured or not speech_configured else "demo" if mock_footage and mock_speech else "real" if not mock_footage and not mock_speech else "mixed"
     links = {}
     if "pexels" in footage:
         links["pexels"] = "https://www.pexels.com/"
@@ -868,9 +1238,12 @@ def provider_information() -> dict[str, Any]:
     return {
         "mode": mode,
         "footage_provider": footage,
+        "footage_configured": footage_configured,
         "speech_provider": speech,
+        "speech_configured": speech_configured,
+        "speech_voice_status": "DEMO - generated 440 Hz test tone, not speech" if speech == "mock-sine-test-tone" else "ElevenLabs configured" if SPEECH_PROVIDER else "ElevenLabs is selected but needs ELEVENLABS_API_KEY and ELEVENLABS_VOICE_ID",
         "external_processing": "pexels" in footage or "wikimedia-commons" in footage or speech == "elevenlabs",
-        "disclosure": "Demo mode uses generated color cards and a 440 Hz test tone; it is not stock footage or spoken narration." if mode == "demo" else "When configured, Commons/Pexels receive scene search phrases and ElevenLabs receives narration text. Local imports remain on this server. Review each clip's license and third-party rights before use.",
+        "disclosure": "Demo mode uses generated color cards and a 440 Hz test tone; it is not stock footage or spoken narration." if mode == "demo" else "Wikimedia Commons footage is selected but needs WIKIMEDIA_CONTACT (a public contact URL or email for the API User-Agent) configured on the server. No still images or demo graphics will be substituted." if footage == "wikimedia-commons-unconfigured" else "Pexels footage is selected but needs PEXELS_API_KEY configured on the server. No mock footage will be substituted." if not footage_configured else "ElevenLabs narration needs ELEVENLABS_API_KEY and ELEVENLABS_VOICE_ID configured on the server." if not speech_configured else "When configured, Commons/Pexels receive scene search phrases and ElevenLabs receives narration text. Local imports remain on this server. Review each clip's license and third-party rights before use.",
         "configuration": {"footage": "BROLL_PROVIDER=wikimedia and WIKIMEDIA_CONTACT (no API key); BROLL_PROVIDER=local uses imported clips; BROLL_PROVIDER=pexels requires PEXELS_API_KEY", "speech": "TTS_PROVIDER=elevenlabs, ELEVENLABS_API_KEY, and ELEVENLABS_VOICE_ID"},
         "provider_links": links,
     }
@@ -989,7 +1362,7 @@ async def create_job(
                 if previous[0] != fingerprint:
                     raise _error("IDEMPOTENCY_KEY_REUSED", "This Idempotency-Key was already used with a different request.", 409)
                 return dict(previous[1])
-        jobs[job_id] = {"job_id": job_id, "status": "queued", "progress": 0, "error": None, "result": None, "created_at": datetime.now(timezone.utc).isoformat(), "_script": script, "_source_audio_path": str(audio_path) if audio_path else None, "_ratio": aspect_ratio}
+        jobs[job_id] = {"job_id": job_id, "status": "queued", "progress": 0, "error": None, "result": None, "voice_input_type": "user_upload" if audio_path else "script", "created_at": datetime.now(timezone.utc).isoformat(), "_script": script, "_source_audio_path": str(audio_path) if audio_path else None, "_ratio": aspect_ratio}
         if idempotency_key is not None:
             idempotency_records[idempotency_key] = (fingerprint, response_body)
     correlation_id = correlation_context.get()
@@ -1004,7 +1377,78 @@ def get_job(job_id: str) -> dict[str, Any]:
         job = jobs.get(job_id)
         if not job:
             raise _error("JOB_NOT_FOUND", "No job exists with that ID.", 404)
+        if "draft_preview" in job and isinstance(job["draft_preview"], dict):
+            preview_id = job["draft_preview"].get("job_id")
+            preview_job = jobs.get(preview_id) if preview_id else None
+            if preview_job:
+                job["draft_preview"].update({
+                    "status": preview_job.get("status"),
+                    "progress": preview_job.get("progress", 0),
+                    "result": preview_job.get("result"),
+                    "error": preview_job.get("error"),
+                })
         return {key: value for key, value in job.items() if not key.startswith("_")}
+
+
+@app.post("/api/v1/jobs/{job_id}/voice")
+def generate_job_voice(job_id: str) -> JSONResponse:
+    with jobs_lock:
+        job = jobs.get(job_id)
+        if not job:
+            raise _error("JOB_NOT_FOUND", "No job exists with that ID.", 404)
+        if job["status"] in {"queued", "running"}:
+            raise _error("JOB_BUSY", "Wait for the current video job to finish before preparing voice audio.", 409)
+        preview = job.get("draft_preview")
+        preview_job = jobs.get(preview.get("job_id")) if isinstance(preview, dict) else None
+        if preview_job and preview_job.get("status") in {"queued", "running"}:
+            raise _error("JOB_BUSY", "Wait for the current draft preview to finish before preparing voice audio.", 409)
+        if job.get("voice_input_type") == "user_upload":
+            return JSONResponse(status_code=200, content=_voice_status(job_id, job))
+        scenes = job.get("scenes") or []
+        if not scenes:
+            raise _error("JOB_NOT_EDITABLE", "A completed script storyboard is required before generating narration.", 409)
+        if settings.speech_provider == "elevenlabs" and SPEECH_PROVIDER is None:
+            raise _error("TTS_NOT_CONFIGURED", "ElevenLabs is selected but not configured. Set ELEVENLABS_API_KEY and ELEVENLABS_VOICE_ID in the server environment or untracked .env file, then restart the server.", 503, {"required_environment": ["ELEVENLABS_API_KEY", "ELEVENLABS_VOICE_ID"], "retryable": False})
+        existing = _voice_status(job_id, job)
+        if existing.get("status") == "ready":
+            return JSONResponse(status_code=200, content=existing)
+        if existing.get("status") in {"queued", "running"}:
+            return JSONResponse(status_code=202, content={"job_id": job_id, **existing, "status_url": f"/api/v1/jobs/{job_id}/voice"})
+        texts = [scene["narration_text"] for scene in scenes]
+        signature = _voice_cache_paths(job_id, texts)[1]
+        queued = {"status": "queued", "progress": 0, "signature": signature, "provider": "elevenlabs" if SPEECH_PROVIDER else MOCK_PROVIDER.name}
+        job["voice_generation"] = queued
+    executor.submit(_generate_voice_task, job_id, signature)
+    return JSONResponse(status_code=202, content={"job_id": job_id, **queued, "status_url": f"/api/v1/jobs/{job_id}/voice"})
+
+
+@app.get("/api/v1/jobs/{job_id}/voice")
+def get_job_voice(job_id: str) -> dict[str, Any]:
+    with jobs_lock:
+        job = jobs.get(job_id)
+        if not job:
+            raise _error("JOB_NOT_FOUND", "No job exists with that ID.", 404)
+        return _voice_status(job_id, job)
+
+
+@app.get("/api/v1/jobs/{job_id}/voice/audio")
+def get_job_voice_audio(job_id: str, signature: str = "") -> FileResponse:
+    with jobs_lock:
+        job = jobs.get(job_id)
+        if not job:
+            raise _error("JOB_NOT_FOUND", "No job exists with that ID.", 404)
+        if job.get("voice_input_type") == "user_upload":
+            raise _error("VOICE_AUDIO_UNAVAILABLE", "This job uses uploaded voice-over audio, which is not exposed as a generated voice artifact.", 404)
+        texts = [scene.get("narration_text", "") for scene in job.get("scenes", [])]
+        if not texts:
+            raise _error("VOICE_AUDIO_UNAVAILABLE", "Narration audio is not ready.", 404)
+        voice_dir, expected_signature = _voice_cache_paths(job_id, texts)
+        if not signature or signature != expected_signature:
+            raise _error("VOICE_AUDIO_STALE", "Narration changed. Generate voice again before playing this audio.", 404)
+        audio_path = (voice_dir / f"narration-{expected_signature}.wav").resolve()
+        if audio_path.parent != voice_dir or not audio_path.is_file() or audio_path.stat().st_size == 0:
+            raise _error("VOICE_AUDIO_UNAVAILABLE", "Narration audio is not ready. Generate voice again.", 404)
+    return FileResponse(audio_path, media_type="audio/wav", filename="scenecraft-narration.wav")
 
 
 @app.patch("/api/v1/jobs/{job_id}/scenes/{scene_id}")
@@ -1027,8 +1471,8 @@ def edit_scene(job_id: str, scene_id: str, changes: SceneEditRequest = Body(...)
                 if value is None or not value.strip():
                     raise _error("INVALID_SCENE_TEXT", f"{field} cannot be empty.", 422)
         decision = values.get("visual_decision")
-        if decision is not None and decision not in {"accepted", "rejected"}:
-            raise _error("INVALID_VISUAL_DECISION", "Visual decision must be accepted or rejected.", 422)
+        if decision is not None and decision not in {"accepted", "rejected", "suggested"}:
+            raise _error("INVALID_VISUAL_DECISION", "Visual decision must be accepted, pending review (suggested), or rejected.", 422)
         selected = None
         if "visual_id" in values:
             visual_id = values["visual_id"]
@@ -1039,12 +1483,13 @@ def edit_scene(job_id: str, scene_id: str, changes: SceneEditRequest = Body(...)
                 raise _error("VISUAL_NOT_AVAILABLE", "Choose a visual option belonging to this scene.", 422)
         if "narration_text" in values:
             scene["narration_text"] = values["narration_text"].strip()
+            job["voice_generation"] = {"status": "stale", "provider": "elevenlabs" if settings.speech_provider == "elevenlabs" else MOCK_PROVIDER.name, "message": "Narration changed. Generate voice again to update the audio and timing."}
         if "caption_text" in values:
             scene["caption_text"] = values["caption_text"].strip()
         if selected is not None:
             scene["selected_visual_id"] = selected["id"]
             scene["selected_visual"] = selected
-            scene["visual_decision"] = "accepted"
+            scene["visual_decision"] = decision or "accepted"
         if decision is not None:
             scene["visual_decision"] = decision
             if decision == "rejected":
@@ -1078,7 +1523,7 @@ def regenerate_scene_visual(job_id: str, scene_id: str) -> dict[str, Any]:
     try:
         options = _visual_options(narration, index, job_id, generation, ratio, excluded_visual_ids)
     except ProviderError as exc:
-        raise _error(exc.code, str(exc), 503 if exc.retryable else 422, exc.details) from exc
+        raise _error(exc.code, str(exc), 503 if exc.retryable else 422, exc.details, retryable=exc.retryable) from exc
     with jobs_lock:
         if job["status"] not in {"succeeded", "failed"}:
             raise _error("JOB_BUSY", "This job started rendering while visual suggestions were being prepared.", 409)
@@ -1102,6 +1547,11 @@ def render_edited_job(job_id: str, request: RenderRequest | None = Body(default=
             raise _error("JOB_NOT_FOUND", "No job exists with that ID.", 404)
         if job["status"] in {"queued", "running"}:
             raise _error("JOB_BUSY", "This job is already rendering.", 409)
+        preview = job.get("draft_preview")
+        if preview:
+            prev_job = jobs.get(preview.get("job_id"))
+            if prev_job and prev_job.get("status") in {"queued", "running"}:
+                raise _error("JOB_BUSY", "Wait for the draft preview render to finish before rendering the full video.", 409)
         scenes = job.get("scenes") or []
         if not scenes:
             raise _error("JOB_NOT_EDITABLE", "A completed draft is required before scene edits can be rendered.", 409)
@@ -1130,6 +1580,11 @@ def create_draft_preview(job_id: str, request: RenderRequest | None = Body(defau
             raise _error("JOB_NOT_FOUND", "No job exists with that ID.", 404)
         if job["status"] in {"queued", "running"}:
             raise _error("JOB_BUSY", "Wait for the current render to finish before creating a draft preview.", 409)
+        preview = job.get("draft_preview")
+        if preview:
+            prev_job = jobs.get(preview.get("job_id"))
+            if prev_job and prev_job.get("status") in {"queued", "running"}:
+                raise _error("DRAFT_PREVIEW_BUSY", "Wait for the current draft preview to finish before creating another.", 409)
         scenes = job.get("scenes") or []
         if not scenes:
             raise _error("JOB_NOT_EDITABLE", "Create a storyboard before previewing the full draft.", 409)
@@ -1151,7 +1606,7 @@ def create_draft_preview(job_id: str, request: RenderRequest | None = Body(defau
         jobs[preview_id] = preview_job
         job["draft_preview"] = {"job_id": preview_id, "status": "queued", "progress": 0, "ratio": ratio, "result": None, "error": None}
         correlation_id = correlation_context.get()
-    executor.submit(_render, preview_id, job.get("_script", ""), ratio, Path(source_audio) if source_audio else None, correlation_id, edited_scenes, True)
+    executor.submit(_render, preview_id, job.get("_script", ""), ratio, Path(source_audio) if source_audio else None, correlation_id, edited_scenes, True, job_id)
     return {"job_id": job_id, "preview_id": preview_id, "status": "queued", "status_url": f"/api/v1/jobs/{job_id}/draft-preview"}
 
 
@@ -1186,10 +1641,20 @@ def get_scene_visual_preview(job_id: str, scene_id: str, visual_id: str) -> File
     if visual.asset_path is None:
         if not visual.download_url:
             raise _error("PREVIEW_UNAVAILABLE", "This generated mock graphic has no source video or image file. It will be represented as a labelled graphic in the draft.", 422)
-        visual = _materialize_visual(visual, job_id)
+        try:
+            visual = _materialize_visual(visual, job_id)
+        except ProviderError as exc:
+            raise HTTPException(
+                status_code=503 if exc.retryable else 422,
+                detail={"error": {"code": "PREVIEW_UNAVAILABLE", "message": f"The candidate media could not be fetched for preview: {exc}", "retryable": exc.retryable, "details": _safe_provider_error_details(exc.details)}},
+            ) from exc
+        with jobs_lock:
+            catalog = job.get("_visual_catalog", {}).get(scene_id, [])
+            job["_visual_catalog"][scene_id] = [visual if item.asset_id == visual.asset_id else item for item in catalog]
     if visual.asset_path is None or not visual.asset_path.is_file():
         raise _error("PREVIEW_UNAVAILABLE", "The selected source media could not be prepared for preview. Try another candidate or import a local clip.", 422)
-    media_type = "image/jpeg" if visual.media_type == "image" else "video/mp4"
+    guessed_type, _ = mimetypes.guess_type(str(visual.asset_path))
+    media_type = guessed_type or ("image/jpeg" if visual.media_type == "image" else "video/mp4")
     return FileResponse(visual.asset_path, media_type=media_type, filename=visual.asset_path.name)
 
 
@@ -1203,6 +1668,23 @@ def get_scene(job_id: str, scene_id: str) -> dict[str, Any]:
         if scene is None:
             raise _error("SCENE_NOT_FOUND", "No scene exists with that ID in this job.", 404)
         return dict(scene)
+
+
+@app.get("/api/v1/jobs/{job_id}/captions.srt")
+def download_current_scene_captions(job_id: str) -> Response:
+    """Download the latest saved scene captions against the project's timeline."""
+    with jobs_lock:
+        job = jobs.get(job_id)
+        if not job:
+            raise _error("JOB_NOT_FOUND", "No job exists with that ID.", 404)
+        captions = _merged_scene_captions_srt(job.get("scenes") or [])
+    if not captions:
+        raise _error("CAPTIONS_UNAVAILABLE", "There are no saved captions to download.", 404)
+    return Response(
+        content=captions,
+        media_type="application/x-subrip; charset=utf-8",
+        headers={"Content-Disposition": 'attachment; filename="scenecraft-captions.srt"'},
+    )
 
 
 @app.get("/api/v1/jobs/{job_id}/artifacts/{filename}")

@@ -15,6 +15,20 @@
     return visual ? { kind: "source", scene, visual } : { kind: "needs-visual", scene };
   }
 
-  root.SceneCraftPreview = { resolvePreviewState };
+  function selectMainPreview({ draftResult, finalResult, activeView }) {
+    const preferred = activeView === "final" ? finalResult : draftResult;
+    const fallback = activeView === "final" ? draftResult : finalResult;
+    const result = preferred?.video ? preferred : fallback?.video ? fallback : null;
+    return {
+      result,
+      kind: !result ? null : result === finalResult ? "final" : "draft",
+    };
+  }
+
+  function selectCaptionResult({ draftResult, finalResult, activeView }) {
+    return selectMainPreview({ draftResult, finalResult, activeView }).result;
+  }
+
+  root.SceneCraftPreview = { resolvePreviewState, selectMainPreview, selectCaptionResult };
   if (typeof module !== "undefined" && module.exports) module.exports = root.SceneCraftPreview;
 })(typeof globalThis !== "undefined" ? globalThis : this);
