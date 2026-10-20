@@ -86,7 +86,7 @@ def test_editing_workspace_and_assets_are_served() -> None:
     assert "Alternative search failed" in script.text
     assert "setCaptionTrack(captions, expectedVideoUrl)" in script.text
     assert '<track id="caption-track"' in markup
-    assert markup.count("<video ") == 1
+    assert markup.count("<video ") == 2
     assert "find-alternatives-button[data-scene-id]" in script.text
     assert 'regenerate.dataset.sceneId = scene.scene_id' in script.text
     assert "button.disabled = !scene || searching || working" in script.text
@@ -94,7 +94,9 @@ def test_editing_workspace_and_assets_are_served() -> None:
     assert "Rendered video" in markup
     assert 'id="source-preview-image"' in markup
     assert '"SOURCE IMAGE PREVIEW - NOT THE RENDERED VIDEO"' in script.text
-    assert '"SOURCE CLIP THUMBNAIL - NOT THE RENDERED VIDEO"' in script.text
+    assert '"SOURCE CLIP PREVIEW - NOT THE RENDERED VIDEO"' in script.text
+    assert 'id="source-preview-video"' in markup
+    assert 'id="add-scene-button"' in markup
     assert '"Previous export - edits need rendering"' in script.text
     assert "source-preview.append(sourceLabel, sourceImage)" not in script.text
     assert 'src="/static/preview-state.js"' in markup
@@ -1003,6 +1005,42 @@ def test_provider_timeout_is_bounded_and_retryable(tmp_path, monkeypatch) -> Non
     assert elapsed < 0.5
 
 
+def test_visual_alternatives_preserve_a_provider_timeout_error_at_the_boundary(monkeypatch) -> None:
+    """The outer watchdog must not mask a provider's own timed-out request."""
+    import time as time_module
+
+    monkeypatch.setattr(main, "PROVIDER_TIMEOUT_SECONDS", 0.05)
+
+    class BoundaryTimeoutProvider:
+        name = "boundary-timeout-provider"
+        version = "test"
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def visual_options_for_ratio(self, scene_text, index, job_id, generation, ratio, exclude_asset_ids):
+            self.calls += 1
+            # Finish just after the request timeout, but within the outer
+            # watchdog's scheduling grace, as a real HTTP adapter does when it
+            # translates a socket timeout into a ProviderError.
+            time_module.sleep(0.06)
+            raise main.ProviderError(
+                "PROVIDER_UNAVAILABLE",
+                "Wikimedia Commons could not be reached.",
+                retryable=True,
+                details={"exception_type": "TimeoutError"},
+            )
+
+    provider = BoundaryTimeoutProvider()
+    monkeypatch.setattr(main, "FOOTAGE_PROVIDER", provider)
+    with pytest.raises(main.ProviderError) as captured:
+        main._visual_options("A cyclist rides on a forest trail.", 0, "job-boundary")
+
+    assert captured.value.code == "PROVIDER_UNAVAILABLE"
+    assert captured.value.details == {"exception_type": "TimeoutError"}
+    assert provider.calls == main.PROVIDER_MAX_ATTEMPTS
+
+
 def test_provider_empty_and_invalid_download_results_fail_without_artifacts(tmp_path, monkeypatch) -> None:
     from app.providers import SceneVisual
 
@@ -1517,6 +1555,43 @@ def test_wikimedia_commons_tries_bounded_alternative_phrases_after_empty_results
     assert options[0].selection_requires_review is True
 
 
+def test_wikimedia_commons_serial_alternative_search_uses_its_bounded_operation_budget(monkeypatch, tmp_path):
+    """Several legal Commons searches must not be cut off as one HTTP request."""
+    from app import providers
+    import time as time_module
+
+    payload = {"query": {"pages": [{"pageid": 556, "title": "File:Forest cycling.webm", "imageinfo": [{
+        "url": "https://upload.wikimedia.org/wikipedia/commons/a/a1/Forest_cycling.webm",
+        "size": 4096, "mime": "video/webm", "mediatype": "VIDEO",
+        "extmetadata": {"LicenseShortName": {"value": "CC BY 4.0"}, "LicenseUrl": {"value": "https://creativecommons.org/licenses/by/4.0/"}, "Artist": {"value": "Cycle Creator"}},
+    }]}]}}
+
+    class FakeResponse(io.BytesIO):
+        def __enter__(self): return self
+        def __exit__(self, *args): self.close()
+        def geturl(self): return "https://commons.wikimedia.org/w/api.php"
+
+    calls = 0
+
+    def search(request, timeout):
+        nonlocal calls
+        calls += 1
+        time_module.sleep(0.06)
+        return FakeResponse(b'{"query":{"pages":[]}}' if calls == 1 else json.dumps(payload).encode())
+
+    monkeypatch.setattr(providers, "urlopen", search)
+    monkeypatch.setattr(main, "PROVIDER_TIMEOUT_SECONDS", 0.05)
+    adapter = providers.WikimediaCommonsFootageProvider(tmp_path, "contact@example.org", timeout=0.05, min_request_interval=0, max_retry_after_seconds=0)
+    adapter.max_search_phrases = 2
+    monkeypatch.setattr(main, "FOOTAGE_PROVIDER", adapter)
+
+    options = main._visual_options("A cyclist rides along a forest trail.", 0, "job-serial-search")
+
+    assert calls == 2
+    assert len(options) == 1
+    assert adapter.operation_timeout_seconds == 0.2
+
+
 def test_wikimedia_commons_failed_search_returns_structured_provider_error(monkeypatch):
     from app import providers
     from urllib.error import HTTPError
@@ -1530,6 +1605,8 @@ def test_wikimedia_commons_failed_search_returns_structured_provider_error(monke
         provider.visual_options("River kayak", 0, "job-1")
     assert error.value.code == "PROVIDER_UNAVAILABLE"
     assert error.value.retryable is True
+    assert error.value.details["stage"] == "commons_search"
+    assert isinstance(error.value.details["elapsed_ms"], int)
 
 
 def test_wikimedia_commons_429_exposes_retry_after_without_retrying(monkeypatch):
@@ -2452,6 +2529,56 @@ def _new_draft(tmp_path, monkeypatch, script="A first editable scene. A second s
     job = wait_for_job(accepted.json()["job_id"])
     assert job["status"] == "succeeded", job["error"]
     return job
+
+
+def test_storyboard_add_split_remove_retimes_scenes_and_invalid_requests_do_not_mutate(tmp_path, monkeypatch) -> None:
+    job = _new_draft(tmp_path, monkeypatch, script="First sentence has enough words. Second sentence also has enough words.")
+    job_id = job["job_id"]
+    added = client.post(f"/api/v1/jobs/{job_id}/scenes", json={"narration_text": "A new ending scene has its own narration.", "caption_text": "A new ending caption.", "duration": 3.5})
+    assert added.status_code == 201
+    new_scene = added.json()["scene"]
+    assert new_scene["scene_id"] not in {scene["scene_id"] for scene in job["scenes"]}
+    assert new_scene["visual_decision"] == "suggested"
+    assert new_scene["selected_visual_id"] is None
+    current = client.get(f"/api/v1/jobs/{job_id}").json()
+    original = current["scenes"][0]
+    before_ids = [scene["scene_id"] for scene in current["scenes"]]
+    invalid = client.post(f"/api/v1/jobs/{job_id}/scenes/{original['scene_id']}/split", json={"split_at": original["start"] + 0.01})
+    assert invalid.status_code == 422
+    assert [scene["scene_id"] for scene in client.get(f"/api/v1/jobs/{job_id}").json()["scenes"]] == before_ids
+    split_at = (original["start"] + original["end"]) / 2
+    split = client.post(f"/api/v1/jobs/{job_id}/scenes/{original['scene_id']}/split", json={"split_at": split_at})
+    assert split.status_code == 200
+    pieces = split.json()["scenes"]
+    assert len({piece["scene_id"] for piece in pieces}) == 2
+    assert all(piece["duration"] > 0 and not piece["selected_visual_id"] for piece in pieces)
+    updated = client.get(f"/api/v1/jobs/{job_id}").json()["scenes"]
+    assert all(round(left["end"], 6) == round(right["start"], 6) for left, right in zip(updated, updated[1:]))
+    assert abs(sum(piece["duration"] for piece in pieces) - original["duration"]) < 0.000001
+    deleted = client.delete(f"/api/v1/jobs/{job_id}/scenes/{new_scene['scene_id']}", json={"confirm": True})
+    assert deleted.status_code == 200
+    assert client.delete(f"/api/v1/jobs/{job_id}/scenes/{pieces[0]['scene_id']}", json={"confirm": False}).status_code == 422
+    assert client.get(f"/api/v1/jobs/{job_id}/voice").json()["status"] == "stale"
+
+
+def test_scene_local_video_upload_is_isolated_validated_and_accepted(tmp_path, monkeypatch) -> None:
+    job = _new_draft(tmp_path, monkeypatch, script="One scene for a local upload. Another scene remains separate.")
+    job_id, first, second = job["job_id"], job["scenes"][0], job["scenes"][1]
+    video = tmp_path / "source.mp4"
+    main._run([main._ffmpeg_path(), "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=teal:s=640x360:r=30", "-t", "1", "-c:v", "libx264", "-pix_fmt", "yuv420p", str(video)])
+    rejected = client.post(f"/api/v1/jobs/{job_id}/scenes/{first['scene_id']}/local-video", files={"video": ("bad.txt", b"not video", "text/plain")}, data={"license": "Owned", "attribution": "Editor", "rights_confirmed": "true"})
+    assert rejected.status_code == 422
+    uploaded = client.post(f"/api/v1/jobs/{job_id}/scenes/{first['scene_id']}/local-video", files={"video": ("../source.mp4", video.read_bytes(), "video/mp4")}, data={"license": "Owned test footage", "attribution": "Test editor", "rights_confirmed": "true"})
+    assert uploaded.status_code == 201
+    scene = uploaded.json()["scene"]
+    assert scene["selected_visual"]["provider"] == "scene-local-upload"
+    assert scene["visual_decision"] == "accepted"
+    preview = client.get(f"/api/v1/jobs/{job_id}/scenes/{first['scene_id']}/visuals/{scene['selected_visual_id']}/preview")
+    assert preview.status_code == 200
+    assert preview.headers["content-type"].startswith("video/")
+    other = client.get(f"/api/v1/jobs/{job_id}/scenes/{second['scene_id']}").json()
+    assert other["selected_visual_id"] != scene["selected_visual_id"]
+    assert not list((tmp_path / job_id / ".scene-uploads").parent.glob("source.mp4"))
 
 
 def test_scene_edit_api_validates_scene_ownership_and_fields(tmp_path, monkeypatch) -> None:

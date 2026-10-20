@@ -145,6 +145,9 @@ The OpenAPI 3.1 contract is in [openapi.yaml](openapi.yaml), served interactivel
 | `GET /api/v1/jobs/{job_id}/voice/audio?signature=...` | Plays the current generated narration WAV; signatures prevent stale audio links from being used after text edits. |
 | `GET /api/v1/jobs/{job_id}/scenes/{scene_id}` | Returns one scene and available visual suggestions. |
 | `PATCH /api/v1/jobs/{job_id}/scenes/{scene_id}` | Edits narration, caption, and selected visual/decision. |
+| `POST /api/v1/jobs/{job_id}/scenes` / `DELETE /api/v1/jobs/{job_id}/scenes/{scene_id}` | Adds or removes a saved storyboard scene; deletion requires confirmation. |
+| `POST /api/v1/jobs/{job_id}/scenes/{scene_id}/split` | Splits an editable scene at a validated timeline position and clears both new visual decisions for review. |
+| `POST /api/v1/jobs/{job_id}/scenes/{scene_id}/local-video` | Validates and stores a rights-declared local video for one scene, then explicitly selects it. |
 | `POST /api/v1/jobs/{job_id}/scenes/{scene_id}/regenerate` | Produces fresh mock color-card suggestions for one scene. |
 | `POST /api/v1/jobs/{job_id}/render` | Queues a full render using saved edits; may change aspect ratio. |
 | `POST /api/v1/jobs/{job_id}/draft-preview` / `GET` same path | Queues and polls a separate full draft preview from saved scene choices; pending suggestions remain pending. |

@@ -124,6 +124,24 @@ class SceneEditRequest(BaseModel):
     visual_decision: str | None = None
 
 
+class SceneCreateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    narration_text: str = Field(min_length=1, max_length=2000)
+    caption_text: str | None = Field(default=None, max_length=500)
+    duration: float = Field(default=4.0, gt=0, le=120)
+    insert_at: int | None = Field(default=None, ge=0)
+
+
+class SceneSplitRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    split_at: float = Field(gt=0)
+
+
+class SceneRemoveRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    confirm: bool = False
+
+
 class RenderRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     aspect_ratio: str | None = None
@@ -155,7 +173,7 @@ def _safe_provider_error_details(details: object) -> dict[str, str | int | float
     """Keep useful diagnostics without exposing arbitrary provider payloads."""
     if not isinstance(details, dict):
         return {}
-    allowed = {"status", "status_code", "retry_after", "retry_after_seconds", "attempt", "max_attempts", "exception_type", "orientation", "max_bytes", "provider_error_code", "provider_error_type", "provider_request_id"}
+    allowed = {"stage", "elapsed_ms", "status", "status_code", "retry_after", "retry_after_seconds", "attempt", "max_attempts", "timeout_seconds", "exception_type", "orientation", "max_bytes", "provider_error_code", "provider_error_type", "provider_request_id"}
     safe: dict[str, str | int | float | bool] = {}
     for key in allowed:
         value = details.get(key)
@@ -329,6 +347,48 @@ def _caption_cues(text: str, start: float, end: float) -> list[dict[str, Any]]:
     return output
 
 
+def _retime_saved_scenes(scenes: list[dict[str, Any]]) -> None:
+    """Keep editable scene timing contiguous until narration is regenerated."""
+    cursor = 0.0
+    for scene in scenes:
+        duration = round(float(scene.get("duration", 0) or 0), 6)
+        if duration <= 0:
+            raise ValueError("Each scene duration must be greater than zero.")
+        start, end = round(cursor, 6), round(cursor + duration, 6)
+        scene.update(start=start, end=end, duration=round(end - start, 6))
+        scene["caption_segments"] = _caption_cues(str(scene.get("caption_text", "")), start, end)
+        cursor = end
+
+
+def _split_scene_text(text: str, ratio: float) -> tuple[str, str]:
+    """Prefer a sentence boundary near the requested timeline split."""
+    text = text.strip()
+    boundaries = [match.end() for match in re.finditer(r"(?<=[.!?])\s+", text)]
+    if boundaries:
+        target = len(text) * ratio
+        cut = min(boundaries, key=lambda value: abs(value - target))
+    else:
+        words = list(re.finditer(r"\S+", text))
+        if len(words) < 2:
+            raise ValueError("A scene needs at least two words to split automatically. Edit the scene text first.")
+        word_index = max(1, min(len(words) - 1, round(len(words) * ratio)))
+        cut = words[word_index - 1].end()
+    left, right = text[:cut].strip(), text[cut:].strip()
+    if not left or not right:
+        raise ValueError("Choose a split point that leaves narration on both scenes.")
+    return left, right
+
+
+def _mark_storyboard_changed(job: dict[str, Any], *, narration_changed: bool) -> None:
+    if narration_changed and job.get("voice_input_type") != "user_upload":
+        job["voice_generation"] = {
+            "status": "stale",
+            "provider": "elevenlabs" if settings.speech_provider == "elevenlabs" else MOCK_PROVIDER.name,
+            "message": "Scene narration changed. Generate voice again to update the audio and timing.",
+        }
+    job["dirty"] = True
+
+
 def _format_srt(cues: list[dict[str, Any]]) -> str:
     return "\n".join(f"{index}\n{_srt_timestamp(cue['start'])} --> {_srt_timestamp(cue['end'])}\n{cue['text']}\n" for index, cue in enumerate(cues, 1))
 
@@ -452,18 +512,51 @@ def _visual_options(scene_text: str, index: int, job_id: str, generation: int = 
         return [_select_visual(scene_text, index, job_id)]
     last_error: ProviderError | None = None
     for attempt in range(PROVIDER_MAX_ATTEMPTS):
+        started_at = time.monotonic()
         if callable(ratio_method):
             future = provider_executor.submit(ratio_method, scene_text, index, job_id, generation, ratio, exclude_asset_ids or set())
         else:
             future = provider_executor.submit(option_method, scene_text, index, job_id, generation)
         try:
-            options = future.result(timeout=PROVIDER_TIMEOUT_SECONDS)
+            # The provider owns the actual HTTP timeout. Give it a small
+            # scheduling grace to map a socket timeout into a safe,
+            # structured ProviderError instead of racing it with this outer
+            # watchdog. This does not lengthen the provider network timeout.
+            completion_grace = min(0.25, PROVIDER_TIMEOUT_SECONDS)
+            declared_budget = getattr(FOOTAGE_PROVIDER, "operation_timeout_seconds", None)
+            operation_timeout = declared_budget if isinstance(declared_budget, (int, float)) and declared_budget >= PROVIDER_TIMEOUT_SECONDS else PROVIDER_TIMEOUT_SECONDS
+            options = future.result(timeout=operation_timeout + completion_grace)
             break
         except FutureTimeout as exc:
             future.cancel()
-            last_error = ProviderError("PROVIDER_TIMEOUT", "Footage alternatives did not respond before the provider timeout.", retryable=True)
+            timeout_details = {
+                "attempt": attempt + 1,
+                "max_attempts": PROVIDER_MAX_ATTEMPTS,
+                "timeout_seconds": operation_timeout,
+                "stage": "alternatives_watchdog",
+                "elapsed_ms": round((time.monotonic() - started_at) * 1000),
+            }
+            logger.warning(
+                "footage alternatives provider error provider=%s stage=%s code=%s retryable=%s elapsed_ms=%s status=%s",
+                getattr(FOOTAGE_PROVIDER, "name", "unknown"),
+                timeout_details["stage"],
+                "PROVIDER_TIMEOUT",
+                True,
+                timeout_details["elapsed_ms"],
+                "-",
+            )
+            last_error = ProviderError("PROVIDER_TIMEOUT", "Footage alternatives did not respond before the provider timeout.", retryable=True, details=timeout_details)
         except ProviderError as exc:
             last_error = exc
+            logger.warning(
+                "footage alternatives provider error provider=%s stage=%s code=%s retryable=%s elapsed_ms=%s status=%s",
+                getattr(FOOTAGE_PROVIDER, "name", "unknown"),
+                _safe_provider_error_details(exc.details).get("stage", "alternatives_search"),
+                exc.code,
+                exc.retryable,
+                _safe_provider_error_details(exc.details).get("elapsed_ms", "-"),
+                _safe_provider_error_details(exc.details).get("status_code", "-"),
+            )
         except Exception as exc:
             if FOOTAGE_PROVIDER is MOCK_PROVIDER:
                 last_error = ProviderError("PROCESSING_FAILED", str(exc), retryable=True, details={"exception_type": type(exc).__name__})
@@ -807,6 +900,24 @@ def _probe_footage(path: Path, asset_id: str) -> None:
         raise ProviderError("PROVIDER_INVALID_ASSET", f"Selected footage is not a valid readable video: {asset_id}", retryable=False) from exc
     if not has_video or duration <= 0:
         raise ProviderError("PROVIDER_INVALID_ASSET", f"Selected footage contains no usable video: {asset_id}", retryable=False)
+
+
+def _validate_scene_upload(path: Path, asset_id: str) -> None:
+    """Apply stricter, bounded validation before retaining a scene upload."""
+    _probe_footage(path, asset_id)
+    ffprobe = _ffprobe_path()
+    if not ffprobe:
+        raise ProviderError("PROVIDER_UNAVAILABLE", "ffprobe is unavailable to validate selected footage.", retryable=True)
+    try:
+        result = _run([ffprobe, "-v", "error", "-select_streams", "v:0", "-show_entries", "format=duration:stream=width,height", "-of", "json", str(path)], timeout=30)
+        payload = json.loads(result.stdout)
+        duration = float(payload["format"]["duration"])
+        stream = next(item for item in payload["streams"] if int(item.get("width", 0)) > 0 and int(item.get("height", 0)) > 0)
+        width, height = int(stream["width"]), int(stream["height"])
+    except (RuntimeError, ValueError, KeyError, TypeError, StopIteration, json.JSONDecodeError) as exc:
+        raise ProviderError("PROVIDER_INVALID_ASSET", "The uploaded scene video could not be inspected.", retryable=False) from exc
+    if duration > 600 or width > 7680 or height > 7680:
+        raise ProviderError("PROVIDER_INVALID_ASSET", "The uploaded scene video exceeds the supported duration or dimensions.", retryable=False)
 
 
 def _probe_image(path: Path, asset_id: str) -> None:
@@ -1520,7 +1631,6 @@ def edit_scene(job_id: str, scene_id: str, changes: SceneEditRequest = Body(...)
                 raise _error("VISUAL_NOT_AVAILABLE", "Choose a visual option belonging to this scene.", 422)
         if "narration_text" in values:
             scene["narration_text"] = values["narration_text"].strip()
-            job["voice_generation"] = {"status": "stale", "provider": "elevenlabs" if settings.speech_provider == "elevenlabs" else MOCK_PROVIDER.name, "message": "Narration changed. Generate voice again to update the audio and timing."}
         if "caption_text" in values:
             scene["caption_text"] = values["caption_text"].strip()
         if selected is not None:
@@ -1532,8 +1642,173 @@ def edit_scene(job_id: str, scene_id: str, changes: SceneEditRequest = Body(...)
             if decision == "rejected":
                 scene["selected_visual_id"] = None
                 scene["selected_visual"] = None
-        scene["duration"] = round(max(0, float(scene["end"]) - float(scene["start"])), 6)
-        job["dirty"] = True
+        _retime_saved_scenes(job["scenes"])
+        _mark_storyboard_changed(job, narration_changed="narration_text" in values)
+        return {"scene": dict(scene), "dirty": True, "render_required": True}
+
+
+def _editable_job(job_id: str) -> dict[str, Any]:
+    job = jobs.get(job_id)
+    if not job:
+        raise _error("JOB_NOT_FOUND", "No job exists with that ID.", 404)
+    if job["status"] not in {"succeeded", "failed"} or not job.get("scenes"):
+        raise _error("JOB_NOT_EDITABLE", "Scenes can be edited after a draft render has completed.", 409)
+    return job
+
+
+@app.post("/api/v1/jobs/{job_id}/scenes", status_code=201)
+def add_scene(job_id: str, request: SceneCreateRequest) -> dict[str, Any]:
+    narration = request.narration_text.strip()
+    caption = (request.caption_text if request.caption_text is not None else narration).strip()
+    if not narration or not caption:
+        raise _error("INVALID_SCENE_TEXT", "Narration and caption text cannot be empty.", 422)
+    with jobs_lock:
+        job = _editable_job(job_id)
+        scenes = job["scenes"]
+        position = len(scenes) if request.insert_at is None else request.insert_at
+        if position > len(scenes):
+            raise _error("INVALID_SCENE_POSITION", "Choose an insertion position within the current storyboard.", 422)
+        scene_id = f"scene-{uuid.uuid4().hex[:12]}"
+        scene = {
+            "scene_id": scene_id, "narration_text": narration, "caption_text": caption,
+            "duration": round(request.duration, 6), "start": 0.0, "end": 0.0,
+            "caption_segments": [], "scene_analysis": analyze_scene(narration),
+            "generation": 0, "selected_visual_id": None, "selected_visual": None,
+            "visual_options": [], "visual_decision": "suggested",
+            "error": {"code": "VISUAL_NEEDED", "message": "Find or upload a visual, then explicitly accept it before rendering.", "retryable": False},
+        }
+        scenes.insert(position, scene)
+        job.setdefault("_visual_catalog", {})[scene_id] = []
+        _retime_saved_scenes(scenes)
+        _mark_storyboard_changed(job, narration_changed=True)
+        return {"scene": dict(scene), "position": position, "dirty": True, "render_required": True}
+
+
+@app.post("/api/v1/jobs/{job_id}/scenes/{scene_id}/split")
+def split_scene(job_id: str, scene_id: str, request: SceneSplitRequest) -> dict[str, Any]:
+    with jobs_lock:
+        job = _editable_job(job_id)
+        scenes = job["scenes"]
+        index = next((i for i, item in enumerate(scenes) if item["scene_id"] == scene_id), None)
+        if index is None:
+            raise _error("SCENE_NOT_FOUND", "No scene exists with that ID in this job.", 404)
+        original = scenes[index]
+        start, end = float(original["start"]), float(original["end"])
+        minimum = 0.1
+        if request.split_at <= start + minimum or request.split_at >= end - minimum:
+            raise _error("INVALID_SPLIT_POINT", "Choose a split point at least 0.1 seconds from each scene boundary.", 422)
+        ratio = (request.split_at - start) / (end - start)
+        try:
+            narration_a, narration_b = _split_scene_text(original["narration_text"], ratio)
+            caption_a, caption_b = _split_scene_text(original["caption_text"], ratio)
+        except ValueError as exc:
+            raise _error("INVALID_SCENE_SPLIT", str(exc), 422) from exc
+        duration_a = round(request.split_at - start, 6)
+        duration_b = round(end - request.split_at, 6)
+        first_id, second_id = f"scene-{uuid.uuid4().hex[:12]}", f"scene-{uuid.uuid4().hex[:12]}"
+        def new_scene(identifier: str, narration: str, caption: str, duration: float) -> dict[str, Any]:
+            return {
+                "scene_id": identifier, "narration_text": narration, "caption_text": caption,
+                "duration": duration, "start": 0.0, "end": 0.0, "caption_segments": [],
+                "scene_analysis": analyze_scene(narration), "generation": 0,
+                "selected_visual_id": None, "selected_visual": None, "visual_options": [],
+                "visual_decision": "suggested", "error": {"code": "VISUAL_NEEDED", "message": "This split scene needs its own accepted visual before rendering.", "retryable": False},
+            }
+        replacements = [new_scene(first_id, narration_a, caption_a, duration_a), new_scene(second_id, narration_b, caption_b, duration_b)]
+        updated = scenes[:index] + replacements + scenes[index + 1:]
+        _retime_saved_scenes(updated)
+        job["scenes"] = updated
+        catalog = job.setdefault("_visual_catalog", {})
+        catalog.pop(scene_id, None)
+        catalog[first_id], catalog[second_id] = [], []
+        _mark_storyboard_changed(job, narration_changed=True)
+        return {"scenes": [dict(item) for item in replacements], "dirty": True, "render_required": True}
+
+
+@app.delete("/api/v1/jobs/{job_id}/scenes/{scene_id}")
+def remove_scene(job_id: str, scene_id: str, request: SceneRemoveRequest = Body(...)) -> dict[str, Any]:
+    if not request.confirm:
+        raise _error("SCENE_DELETE_CONFIRMATION_REQUIRED", "Confirm deletion because this discards this scene's saved edits and visual choice.", 422)
+    with jobs_lock:
+        job = _editable_job(job_id)
+        scenes = job["scenes"]
+        if len(scenes) <= 1:
+            raise _error("SCENE_DELETE_NOT_ALLOWED", "Keep at least one scene in the storyboard.", 422)
+        index = next((i for i, item in enumerate(scenes) if item["scene_id"] == scene_id), None)
+        if index is None:
+            raise _error("SCENE_NOT_FOUND", "No scene exists with that ID in this job.", 404)
+        removed = scenes.pop(index)
+        job.setdefault("_visual_catalog", {}).pop(scene_id, None)
+        _retime_saved_scenes(scenes)
+        _mark_storyboard_changed(job, narration_changed=True)
+        return {"removed_scene_id": removed["scene_id"], "dirty": True, "render_required": True}
+
+
+@app.post("/api/v1/jobs/{job_id}/scenes/{scene_id}/local-video", status_code=201)
+async def upload_scene_video(
+    job_id: str,
+    scene_id: str,
+    video: UploadFile = File(...),
+    license: str = Form(...),
+    attribution: str = Form(...),
+    rights_confirmed: bool = Form(...),
+) -> dict[str, Any]:
+    """Store a validated, rights-declared clip in this job only."""
+    suffix = Path(video.filename or "").suffix.lower()
+    if suffix not in ALLOWED_FOOTAGE_EXTENSIONS:
+        raise _error("INVALID_FOOTAGE_TYPE", "Upload an MP4, MOV, M4V, WebM, OGV, or MKV video file.", 422)
+    license, attribution = license.strip(), attribution.strip()
+    if len(license) < 2 or len(license) > 300 or len(attribution) < 2 or len(attribution) > 500:
+        raise _error("INVALID_FOOTAGE_METADATA", "Provide the clip's license and attribution.", 422)
+    if not rights_confirmed:
+        raise _error("FOOTAGE_RIGHTS_NOT_CONFIRMED", "Confirm that you have permission to use this clip before uploading.", 422)
+    content = await video.read(settings.max_footage_bytes + 1)
+    if len(content) < 1024 or len(content) > settings.max_footage_bytes:
+        raise _error("INVALID_FOOTAGE_SIZE", f"Footage file must be at least 1 KiB and no larger than {settings.max_footage_bytes // (1024 * 1024)} MiB.", 422)
+    with jobs_lock:
+        job = _editable_job(job_id)
+        scene = next((item for item in job["scenes"] if item["scene_id"] == scene_id), None)
+        if scene is None:
+            raise _error("SCENE_NOT_FOUND", "No scene exists with that ID in this job.", 404)
+    folder = (DATA_DIR / job_id / ".scene-uploads").resolve()
+    job_root = (DATA_DIR / job_id).resolve()
+    if folder.parent != job_root:
+        raise _error("INVALID_UPLOAD_PATH", "The scene upload path is invalid.", 500)
+    folder.mkdir(parents=True, exist_ok=True)
+    asset_id = f"scene-upload-{uuid.uuid4().hex}"
+    destination = folder / f"{asset_id}{suffix}"
+    temporary = destination.with_suffix(destination.suffix + ".part")
+    try:
+        temporary.write_bytes(content)
+        _validate_scene_upload(temporary, asset_id)
+        temporary.replace(destination)
+    except ProviderError as exc:
+        raise _error(exc.code, str(exc), 503 if exc.retryable else 422, _safe_provider_error_details(exc.details), retryable=exc.retryable) from exc
+    finally:
+        temporary.unlink(missing_ok=True)
+    visual = SceneVisual(
+        asset_id=asset_id, color="black", asset_path=destination, provider="scene-local-upload",
+        source="Local video uploaded for this scene", source_url=None, license=license,
+        attribution=attribution, ai_generated=False,
+        selection_reason="Uploaded locally for this scene; rights are declared by the operator.",
+        relevance_score=None, warnings=("Local clip rights are declared by the operator and were not independently verified by SceneCraft.",),
+        license_verified=False, rights_basis="user_attestation", media_type="video",
+    )
+    with jobs_lock:
+        job = _editable_job(job_id)
+        scene = next((item for item in job["scenes"] if item["scene_id"] == scene_id), None)
+        if scene is None:
+            destination.unlink(missing_ok=True)
+            raise _error("SCENE_NOT_FOUND", "The scene was removed before the upload completed.", 404)
+        catalog = job.setdefault("_visual_catalog", {}).setdefault(scene_id, [])
+        catalog.append(visual)
+        details = _visual_details(visual)
+        scene["visual_options"] = [*scene.get("visual_options", []), details]
+        scene["selected_visual_id"] = asset_id
+        scene["selected_visual"] = details
+        scene["visual_decision"] = "accepted"
+        scene.pop("error", None)
+        _mark_storyboard_changed(job, narration_changed=False)
         return {"scene": dict(scene), "dirty": True, "render_required": True}
 
 

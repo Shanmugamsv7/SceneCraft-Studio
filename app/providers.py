@@ -319,6 +319,12 @@ class WikimediaCommonsFootageProvider:
         self._max_retry_after_seconds = max_retry_after_seconds
         self._last_rejection_counts: dict[str, int] = {}
 
+    @property
+    def operation_timeout_seconds(self) -> float:
+        """Bound the complete, serial alternative-search plan, not one request."""
+        per_search_budget = self._timeout + self._max_retry_after_seconds + self._timeout
+        return self.max_search_phrases * per_search_budget + max(0, self.max_search_phrases - 1) * self._min_request_interval
+
     def _query(self, scene_text: str) -> str:
         phrases = self._search_phrases(scene_text)
         return phrases[0] if phrases else ""
@@ -368,6 +374,7 @@ class WikimediaCommonsFootageProvider:
         )
 
     def _search(self, query: str, *, filetype: str = "video") -> bytes:
+        started_at = time.monotonic()
         params = {
             "action": "query", "format": "json", "formatversion": "2", "generator": "search",
             "gsrnamespace": "6", "gsrlimit": "12", "gsrsearch": f"filetype:{filetype} {query}",
@@ -406,7 +413,7 @@ class WikimediaCommonsFootageProvider:
                                 continue
                         retryable = exc.code == 429 or exc.code >= 500
                         code = "PROVIDER_RATE_LIMITED" if exc.code == 429 else "PROVIDER_UNAVAILABLE"
-                        details = {"status_code": exc.code, **retry_details}
+                        details = {"stage": "commons_search", "elapsed_ms": round((time.monotonic() - started_at) * 1000), "status_code": exc.code, **retry_details}
                         raise ProviderError(code, f"Wikimedia Commons search failed with HTTP {exc.code}.", retryable=retryable, details=details) from exc
                 if len(raw) > self.max_search_bytes:
                     raise ProviderError("PROVIDER_INVALID_RESULT", "Wikimedia Commons returned an unexpectedly large search response.", retryable=False)
@@ -414,7 +421,7 @@ class WikimediaCommonsFootageProvider:
             except ProviderError:
                 raise
             except (URLError, TimeoutError, OSError) as exc:
-                raise ProviderError("PROVIDER_UNAVAILABLE", "Wikimedia Commons could not be reached.", retryable=True, details={"exception_type": type(exc).__name__}) from exc
+                raise ProviderError("PROVIDER_UNAVAILABLE", "Wikimedia Commons could not be reached.", retryable=True, details={"stage": "commons_search", "elapsed_ms": round((time.monotonic() - started_at) * 1000), "exception_type": type(exc).__name__}) from exc
         raise ProviderError("PROVIDER_RATE_LIMITED", "Wikimedia Commons rate limit persisted after one bounded retry.", retryable=True)
 
     def _parse_video_options(self, pages: object, query: str, exclude_asset_ids: set[str], scene_context: str | None = None) -> list[SceneVisual]:
@@ -524,6 +531,7 @@ class WikimediaCommonsFootageProvider:
         folder.mkdir(parents=True, exist_ok=True)
         destination = folder / f"{visual.asset_id}{suffix}"
         temporary = destination.with_suffix(destination.suffix + ".part")
+        started_at = time.monotonic()
         try:
             with urlopen(Request(visual.download_url, headers={"User-Agent": f"SceneCraftStudio/1.0 ({self._contact})"}), timeout=self._timeout) as response, temporary.open("wb") as output:
                 if not self._allowed_media_url(response.geturl()):
@@ -549,10 +557,10 @@ class WikimediaCommonsFootageProvider:
         except HTTPError as exc:
             retryable = exc.code == 429 or exc.code >= 500
             code = "PROVIDER_RATE_LIMITED" if exc.code == 429 else "PROVIDER_DOWNLOAD_FAILED"
-            details = {"status_code": exc.code, **_retry_after_details(exc.headers)}
+            details = {"stage": "commons_download", "elapsed_ms": round((time.monotonic() - started_at) * 1000), "status_code": exc.code, **_retry_after_details(exc.headers)}
             raise ProviderError(code, f"Commons file download failed with HTTP {exc.code}.", retryable=retryable, details=details) from exc
         except (URLError, TimeoutError, OSError) as exc:
-            raise ProviderError("PROVIDER_DOWNLOAD_FAILED", "Commons file download failed.", retryable=True, details={"exception_type": type(exc).__name__}) from exc
+            raise ProviderError("PROVIDER_DOWNLOAD_FAILED", "Commons file download failed.", retryable=True, details={"stage": "commons_download", "elapsed_ms": round((time.monotonic() - started_at) * 1000), "exception_type": type(exc).__name__}) from exc
         finally:
             temporary.unlink(missing_ok=True)
 
@@ -786,6 +794,10 @@ class FallbackFootageProvider:
         self.images = images
         self.name = f"{primary.name}+{local.name}"
         self.version = f"{primary.version}+{local.version}"
+
+    @property
+    def operation_timeout_seconds(self) -> float | None:
+        return getattr(self.primary, "operation_timeout_seconds", None)
 
     def visual_options(self, scene_text: str, index: int, job_id: str, generation: int = 0) -> list[SceneVisual]:
         return self.visual_options_for_ratio(scene_text, index, job_id, generation, "16:9", set())

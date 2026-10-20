@@ -88,6 +88,7 @@
             <p id="draft-preview-status" class="field-hint" role="status" aria-live="polite">Save a visual choice for every scene to preview the complete draft.</p>
             <div id="preview-empty" class="preview-empty"><span class="play-emblem" aria-hidden="true">▶</span><b id="preview-empty-title">Your preview will appear here</b><span id="preview-empty-message">Create a draft to preview its selected visuals.</span></div>
             <div id="source-preview" class="main-source-preview" hidden aria-live="polite">
+              <video id="source-preview-video" controls playsinline preload="metadata" hidden aria-label="Selected source clip preview"></video>
               <img id="source-preview-image" alt="Selected source visual preview" hidden referrerpolicy="no-referrer">
               <div id="source-preview-swatch" class="main-source-swatch" hidden aria-hidden="true"></div>
               <div id="source-preview-note" class="main-source-note" hidden></div>
@@ -99,7 +100,7 @@
           </section>
 
           <section id="storyboard" class="storyboard-section">
-            <div class="section-heading"><div><p class="eyebrow">STEP 2 &middot; STORYBOARD</p><h3>Review every scene</h3><p id="scene-count">Your scene cards will appear after you create a video.</p></div><span class="human-badge"><span class="badge-icon" aria-hidden="true"><svg class="ui-icon" viewBox="0 0 24 24"><path d="m12 3 1.6 5.4L19 10l-5.4 1.6L12 17l-1.6-5.4L5 10l5.4-1.6L12 3Z"/></svg></span> You decide what stays</span></div>
+            <div class="section-heading"><div><p class="eyebrow">STEP 2 &middot; STORYBOARD</p><h3>Review every scene</h3><p id="scene-count">Your scene cards will appear after you create a video.</p></div><div class="storyboard-tools"><button id="add-scene-button" class="mini-button" type="button" disabled>Add scene</button><span class="human-badge"><span class="badge-icon" aria-hidden="true"><svg class="ui-icon" viewBox="0 0 24 24"><path d="m12 3 1.6 5.4L19 10l-5.4 1.6L12 17l-1.6-5.4L5 10l5.4-1.6L12 3Z"/></svg></span> You decide what stays</span></div></div>
             <div id="scene-list" class="scene-list" aria-live="polite"><div class="empty-scenes"><span class="empty-scenes-icon" aria-hidden="true"><svg class="ui-icon" viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="14" rx="2"/><path d="M8 9h8M8 13h8"/></svg></span><p>Your scenes will be organized here.</p><small>Review narration, captions, and visuals individually.</small></div></div>
           </section>
         </div>

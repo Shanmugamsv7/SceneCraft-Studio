@@ -171,6 +171,8 @@ function updateEditState() {
   const previewState = document.querySelector("#preview-state");
   if (previewState) previewState.textContent = renderedRatio && (dirty || currentJob?.dirty || ratioDirty) ? "Last render · edits pending" : renderedRatio ? "Current export" : "No export yet";
   document.querySelector("#save-button").disabled = !dirty || working;
+  const addSceneButton = document.querySelector("#add-scene-button");
+  if (addSceneButton) addSceneButton.disabled = !currentJobId || working || !["succeeded", "failed"].includes(currentJob?.status);
   const canRender = currentJob && ["succeeded", "failed"].includes(currentJob.status) && scenes.length > 0 && scenes.every((scene) => {
     const decision = scene._draft?.visual_decision ?? scene.visual_decision;
     const selected = scene._draft?.visual_id !== undefined ? scene._draft.visual_id : scene.selected_visual_id;
@@ -457,6 +459,28 @@ function renderScenes() {
     regenerate.textContent = scene._searchingAlternatives ? "Searching alternatives…" : "Find alternatives";
     regenerate.addEventListener("click", () => regenerateVisual(scene));
     const selected = previewVisual;
+    const previewButton = document.createElement("button");
+    previewButton.className = "mini-button";
+    previewButton.type = "button";
+    previewButton.textContent = "Preview clip";
+    previewButton.disabled = !previewVisual || previewVisual.provider === "mock-local";
+    previewButton.addEventListener("click", () => { activePreviewSceneId = scene.scene_id; syncMainPreview(); document.querySelector("#source-preview-video")?.focus(); });
+    const upload = document.createElement("button");
+    upload.className = "mini-button";
+    upload.type = "button";
+    upload.textContent = selected?.provider === "scene-local-upload" ? "Replace local video" : "Upload local video";
+    upload.addEventListener("click", () => chooseSceneUpload(scene));
+    const split = document.createElement("button");
+    split.className = "mini-button";
+    split.type = "button";
+    split.textContent = "Split scene";
+    split.addEventListener("click", () => splitScene(scene));
+    const remove = document.createElement("button");
+    remove.className = "mini-button reject";
+    remove.type = "button";
+    remove.textContent = "Remove scene";
+    remove.disabled = scenes.length <= 1;
+    remove.addEventListener("click", () => removeScene(scene));
     const source = document.createElement(selected?.source_url ? "a" : "span");
     source.className = "scene-source";
     if (selected?.source_url) {
@@ -474,6 +498,10 @@ function renderScenes() {
       provenance.textContent = `${selected.attribution || "Creator not identified"} · ${selected.license || "License metadata unavailable"}`;
       card.append(provenance);
     }
+    const visualStatus = document.createElement("p");
+    visualStatus.className = `scene-status ${selected?.selection_requires_review ? "warning" : ""}`;
+    visualStatus.textContent = scene._uploadingLocal ? "Validating and saving local footage…" : !selected ? "Needs a visual. Find or upload a clip, then explicitly accept it." : decision === "accepted" ? "Visual accepted and ready for rendering." : selected.selection_requires_review ? "This clip may not fully match the narration. Preview it before accepting." : "Suggested visual available. Preview and explicitly accept it before rendering.";
+    card.append(visualStatus);
     card.append(rationale);
     if (scene._searchingAlternatives || scene._alternativeError) {
       const searchStatus = document.createElement("p");
@@ -482,7 +510,7 @@ function renderScenes() {
       searchStatus.textContent = scene._searchingAlternatives ? "Searching this scene with the selected footage provider…" : scene._alternativeError;
       card.append(searchStatus);
     }
-    actions.append(accept, reject, regenerate, source);
+    actions.append(previewButton, accept, reject, regenerate, upload, split, remove, source);
     card.append(actions);
     sceneList.append(card);
   });
@@ -511,6 +539,7 @@ function syncMainPreview() {
   const state = window.SceneCraftPreview.resolvePreviewState({ result: activeResult, scenes, activeSceneId: activePreviewSceneId, stale });
   const empty = document.querySelector("#preview-empty");
   const source = document.querySelector("#source-preview");
+  const sourceVideo = document.querySelector("#source-preview-video");
   const video = document.querySelector("#preview-video");
   const image = document.querySelector("#source-preview-image");
   const swatch = document.querySelector("#source-preview-swatch");
@@ -519,6 +548,7 @@ function syncMainPreview() {
   const description = document.querySelector("#preview-description");
   const previewRatio = document.querySelector("#preview-ratio");
   image.hidden = true; swatch.hidden = true; note.hidden = true;
+  sourceVideo.pause(); sourceVideo.removeAttribute("src"); sourceVideo.hidden = true;
   if (state.kind === "rendered" || state.kind === "stale") {
     empty.hidden = true; source.hidden = true; video.hidden = false;
     title.textContent = isDraft ? (state.kind === "stale" ? "Previous draft preview · edits pending" : "Full draft preview · not final export") : (state.kind === "stale" ? "Previous export - edits need rendering" : "Final rendered video");
@@ -553,10 +583,18 @@ function syncMainPreview() {
     source.style.aspectRatio = selectedRatio.replace(":", " / ");
     const { visual, scene } = state;
     const mediaLabel = visual.media_type === "image" ? "IMAGE" : "CLIP";
-    document.querySelector("#source-preview-label").textContent = visual.provider === "mock-local" ? "GENERATED MOCK GRAPHIC - DEMO ONLY" : visual.media_type === "image" ? "SOURCE IMAGE PREVIEW - NOT THE RENDERED VIDEO" : "SOURCE CLIP THUMBNAIL - NOT THE RENDERED VIDEO";
+    document.querySelector("#source-preview-label").textContent = visual.provider === "mock-local" ? "GENERATED MOCK GRAPHIC - DEMO ONLY" : visual.media_type === "image" ? "SOURCE IMAGE PREVIEW - NOT THE RENDERED VIDEO" : "SOURCE CLIP PREVIEW - NOT THE RENDERED VIDEO";
     document.querySelector("#source-preview-title").textContent = "Scene " + (scenes.indexOf(scene) + 1) + ": " + (visual.source || "Selected source");
     document.querySelector("#source-preview-credit").textContent = (visual.attribution || "Creator not identified") + " - " + (visual.license || "License metadata unavailable");
-    if (visual.thumbnail_url) {
+    if (visual.media_type === "video" && visual.provider !== "mock-local") {
+      sourceVideo.src = `/api/v1/jobs/${encodeURIComponent(currentJobId)}/scenes/${encodeURIComponent(scene.scene_id)}/visuals/${encodeURIComponent(visual.id)}/preview?_candidate=${encodeURIComponent(visual.id)}`;
+      sourceVideo.hidden = false;
+      sourceVideo.load();
+      note.textContent = "Loading playable source clip. Previewing does not accept it.";
+      note.hidden = false;
+      sourceVideo.onloadeddata = () => { note.hidden = true; };
+      sourceVideo.onerror = () => { note.textContent = "Playable preview is unavailable. Review the source or choose another candidate; this clip is not accepted automatically."; note.hidden = false; };
+    } else if (visual.thumbnail_url) {
       image.src = visual.thumbnail_url;
       image.alt = "Source " + mediaLabel.toLowerCase() + " thumbnail: " + (visual.source || "selected visual");
       image.hidden = false;
@@ -852,6 +890,101 @@ async function regenerateVisual(scene) {
   }
 }
 
+async function addScene() {
+  if (!currentJobId || working) return;
+  const narration = window.prompt("Narration for the new scene:");
+  if (narration === null) return;
+  const trimmed = narration.trim();
+  if (!trimmed) { showNotice("Narration is required for a new scene."); return; }
+  const caption = window.prompt("Caption text (leave blank to use narration):", trimmed);
+  if (caption === null) return;
+  const durationValue = window.prompt("Provisional scene duration in seconds:", "4");
+  if (durationValue === null) return;
+  const duration = Number(durationValue);
+  if (!Number.isFinite(duration) || duration <= 0 || duration > 120) { showNotice("Enter a duration between 0 and 120 seconds."); return; }
+  const insertAfter = window.prompt("Insert after scene number (leave blank to add at the end):", "");
+  if (insertAfter === null) return;
+  const insertAt = insertAfter.trim() ? Number(insertAfter) : scenes.length;
+  if (!Number.isInteger(insertAt) || insertAt < 0 || insertAt > scenes.length) { showNotice("Choose a valid scene position."); return; }
+  working = true; updateEditState();
+  try {
+    const result = await api(`/api/v1/jobs/${currentJobId}/scenes`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ narration_text: trimmed, caption_text: caption.trim() || trimmed, duration, insert_at: insertAt }) });
+    scenes.splice(result.position, 0, result.scene);
+    currentJob = await api(`/api/v1/jobs/${currentJobId}`);
+    activePreviewSceneId = result.scene.scene_id;
+    draftPreviewStale = Boolean(draftPreviewResult?.video || currentResult?.video);
+    renderScenes(); showNotice("Scene added. Find or upload a visual, then accept it before rendering.");
+  } catch (error) { showNotice(error.message); }
+  finally { working = false; updateEditState(); }
+}
+
+async function splitScene(scene) {
+  if (!currentJobId || working) return;
+  const midpoint = ((Number(scene.start) + Number(scene.end)) / 2).toFixed(2);
+  const value = window.prompt("Split at timeline seconds. Both scenes need narration and a new accepted visual.", midpoint);
+  if (value === null) return;
+  const splitAt = Number(value);
+  if (!Number.isFinite(splitAt)) { showNotice("Enter a valid timeline timestamp."); return; }
+  if (!window.confirm("Split this scene? Its visual choice will be cleared so each new scene can be reviewed independently.")) return;
+  working = true; updateEditState();
+  try {
+    const result = await api(`/api/v1/jobs/${currentJobId}/scenes/${encodeURIComponent(scene.scene_id)}/split`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ split_at: splitAt }) });
+    const index = scenes.findIndex((item) => item.scene_id === scene.scene_id);
+    if (index >= 0) scenes.splice(index, 1, ...result.scenes);
+    currentJob = await api(`/api/v1/jobs/${currentJobId}`);
+    activePreviewSceneId = result.scenes[0].scene_id;
+    draftPreviewStale = Boolean(draftPreviewResult?.video || currentResult?.video);
+    renderScenes(); showNotice("Scene split. Review narration/captions and choose visuals for both scenes.");
+  } catch (error) { showNotice(error.message); }
+  finally { working = false; updateEditState(); }
+}
+
+async function removeScene(scene) {
+  if (!currentJobId || working) return;
+  if (!window.confirm("Remove this scene? Its unsaved text edits and visual choice will be discarded.")) return;
+  working = true; updateEditState();
+  try {
+    await api(`/api/v1/jobs/${currentJobId}/scenes/${encodeURIComponent(scene.scene_id)}`, { method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ confirm: true }) });
+    scenes = scenes.filter((item) => item.scene_id !== scene.scene_id);
+    currentJob = await api(`/api/v1/jobs/${currentJobId}`);
+    activePreviewSceneId = scenes[0]?.scene_id || null;
+    draftPreviewStale = Boolean(draftPreviewResult?.video || currentResult?.video);
+    renderScenes(); showNotice("Scene removed.");
+  } catch (error) { showNotice(error.message); }
+  finally { working = false; updateEditState(); }
+}
+
+function chooseSceneUpload(scene) {
+  if (!currentJobId || working) return;
+  const input = document.createElement("input");
+  input.type = "file";
+  input.accept = ".mp4,.mov,.m4v,.webm,.ogv,.mkv,video/mp4,video/webm,video/quicktime";
+  input.addEventListener("change", async () => {
+    const file = input.files?.[0];
+    if (!file) return;
+    const license = window.prompt("License or rights basis for this local video:", "User-owned or licensed footage");
+    if (license === null || !license.trim()) return;
+    const attribution = window.prompt("Attribution/creator credit for this local video:", "Provided by project editor");
+    if (attribution === null || !attribution.trim()) return;
+    if (!window.confirm("Confirm that you have permission to use this video and will comply with its license.")) return;
+    const target = scenes.find((item) => item.scene_id === scene.scene_id);
+    if (!target) return;
+    target._uploadingLocal = true; working = true; renderScenes(); updateEditState();
+    const data = new FormData();
+    data.set("video", file); data.set("license", license.trim()); data.set("attribution", attribution.trim()); data.set("rights_confirmed", "true");
+    try {
+      const result = await api(`/api/v1/jobs/${currentJobId}/scenes/${encodeURIComponent(scene.scene_id)}/local-video`, { method: "POST", body: data });
+      Object.assign(target, result.scene); delete target._draft;
+      currentJob = await api(`/api/v1/jobs/${currentJobId}`);
+      activePreviewSceneId = target.scene_id;
+      draftPreviewStale = Boolean(draftPreviewResult?.video || currentResult?.video);
+      showNotice("Local footage is selected and accepted for this scene.");
+    } catch (error) { showNotice(error.message); }
+    finally { delete target._uploadingLocal; working = false; renderScenes(); updateEditState(); }
+  }, { once: true });
+  input.click();
+}
+
 async function createOrRefreshDraftPreview() {
   if (!currentJobId || working) return;
   if (scenes.some(sceneDirty)) {
@@ -1038,6 +1171,7 @@ document.querySelectorAll('input[name="aspect_ratio"]').forEach((input) => input
     if (currentJobId) updateEditState();
 }));
 document.querySelector("#save-button").addEventListener("click", saveEdits);
+document.querySelector("#add-scene-button")?.addEventListener("click", addScene);
 document.querySelector("#render-button").addEventListener("click", renderFullVideo);
 document.querySelector("#generate-voice-button")?.addEventListener("click", generateVoice);
 document.querySelector("#preview-video").addEventListener("loadeddata", () => {
