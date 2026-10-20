@@ -40,6 +40,20 @@ def test_health_and_home() -> None:
     assert client.get("/api/v1/openapi.json").json()["openapi"] == "3.1.0"
 
 
+def test_deployment_access_token_protects_interactive_routes_not_health(monkeypatch) -> None:
+    from dataclasses import replace
+    import base64
+
+    monkeypatch.setattr(main, "settings", replace(main.settings, access_token="test-deployment-token"))
+    assert client.get("/").status_code == 401
+    assert client.get("/static/app.js").status_code == 401
+    assert client.get("/health").status_code == 200
+    assert client.get("/ready").status_code != 401
+    header = base64.b64encode(b"scenecraft:test-deployment-token").decode("ascii")
+    assert client.get("/", headers={"Authorization": f"Basic {header}"}).status_code == 200
+    assert client.get("/", headers={"Authorization": "Bearer test-deployment-token"}).status_code == 200
+
+
 def test_editing_workspace_and_assets_are_served() -> None:
     page = client.get("/")
     assert page.status_code == 200
@@ -1262,6 +1276,8 @@ def test_real_provider_configuration_requires_server_credentials() -> None:
     settings = load_settings({"BROLL_PROVIDER": "pexels", "PEXELS_API_KEY": "test-key", "TTS_PROVIDER": "elevenlabs", "ELEVENLABS_API_KEY": "test-key", "ELEVENLABS_VOICE_ID": "test-voice"})
     assert settings.provider == "pexels"
     assert settings.speech_provider == "elevenlabs"
+    assert load_settings({"SCENECRAFT_ACCESS_TOKEN": "test-token"}).access_token == "test-token"
+    assert load_settings({}).access_token is None
     incomplete_commons = load_settings({"BROLL_PROVIDER": "wikimedia"})
     assert incomplete_commons.provider == "wikimedia"
     assert incomplete_commons.wikimedia_contact is None
@@ -2034,6 +2050,14 @@ def test_elevenlabs_409_failure_reaches_voice_status_and_safe_log(tmp_path, monk
     from app import providers
 
     job = _new_draft(tmp_path, monkeypatch, script="A short narration for conflict reporting.")
+    class Provider:
+        name = "elevenlabs"
+
+    monkeypatch.setattr(main.logger, "propagate", True)
+    monkeypatch.setattr(main, "SPEECH_PROVIDER", Provider())
+    # Match the production flow: the request signature is calculated from the
+    # provider that will perform the work. Changing providers after capturing
+    # it is correctly treated as a stale request, not a provider failure.
     texts = [scene["narration_text"] for scene in main.jobs[job["job_id"]]["scenes"]]
     signature = main._voice_cache_paths(job["job_id"], texts)[1]
     provider_error = providers.ProviderError(
@@ -2043,11 +2067,6 @@ def test_elevenlabs_409_failure_reaches_voice_status_and_safe_log(tmp_path, monk
         details={"status_code": 409, "provider_error_code": "voice_access_denied"},
     )
 
-    class Provider:
-        name = "elevenlabs"
-
-    monkeypatch.setattr(main.logger, "propagate", True)
-    monkeypatch.setattr(main, "SPEECH_PROVIDER", Provider())
     monkeypatch.setattr(main, "_prepare_speech_audio", lambda *args, **kwargs: (_ for _ in ()).throw(provider_error))
     main._generate_voice_task(job["job_id"], signature)
 
@@ -2340,10 +2359,15 @@ def test_compose_configuration_has_only_the_local_app_service() -> None:
     assert environment["TTS_PROVIDER"] == "${TTS_PROVIDER:-mock}"
     assert environment["ELEVENLABS_API_KEY"] == "${ELEVENLABS_API_KEY:-}"
     assert environment["ELEVENLABS_VOICE_ID"] == "${ELEVENLABS_VOICE_ID:-}"
+    assert environment["SCENECRAFT_ACCESS_TOKEN"] == "${SCENECRAFT_ACCESS_TOKEN:-}"
     dockerfile = (main.ROOT / "Dockerfile").read_text(encoding="utf-8")
     assert "apt-get install -y --no-install-recommends ffmpeg" in dockerfile
     assert "ffmpeg -version" in dockerfile and "ffprobe -version" in dockerfile
-    assert 'CMD ["uvicorn", "app.main:app"' in dockerfile
+    assert 'CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]' in dockerfile
+    assert "USER scenecraft" in dockerfile
+    dockerignore = (main.ROOT / ".dockerignore").read_text(encoding="utf-8")
+    assert ".env" in dockerignore
+    assert "data" in dockerignore
 
 
 def test_batch_runner_records_success_and_failure(tmp_path) -> None:

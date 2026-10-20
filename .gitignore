@@ -10,3 +10,5 @@ __pycache__/
 *.py[cod]
 data/jobs/*
 !data/jobs/.gitkeep
+data/footage-library/*
+!data/footage-library/.gitkeep

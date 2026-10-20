@@ -17,6 +17,7 @@ services:
       MAX_UPLOAD_BYTES: ${MAX_UPLOAD_BYTES:-26214400}
       JOB_WORKERS: ${JOB_WORKERS:-2}
       PROVIDER_TIMEOUT_SECONDS: ${PROVIDER_TIMEOUT_SECONDS:-10}
+      SCENECRAFT_ACCESS_TOKEN: ${SCENECRAFT_ACCESS_TOKEN:-}
     volumes:
       - ./data:/app/data
     healthcheck:

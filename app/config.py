@@ -33,6 +33,7 @@ class Settings:
     elevenlabs_voice_id: str | None
     elevenlabs_model_id: str
     max_footage_bytes: int
+    access_token: str | None
 
 
 def load_settings(environ: dict[str, str] | None = None) -> Settings:
@@ -55,6 +56,7 @@ def load_settings(environ: dict[str, str] | None = None) -> Settings:
     elevenlabs_api_key = values.get("ELEVENLABS_API_KEY", "").strip() or None
     elevenlabs_voice_id = values.get("ELEVENLABS_VOICE_ID", "").strip() or None
     elevenlabs_model_id = values.get("ELEVENLABS_MODEL_ID", "eleven_multilingual_v2").strip()
+    access_token = values.get("SCENECRAFT_ACCESS_TOKEN", "").strip() or None
     if not elevenlabs_model_id:
         raise ValueError("ELEVENLABS_MODEL_ID must not be empty.")
     try:
@@ -93,6 +95,7 @@ def load_settings(environ: dict[str, str] | None = None) -> Settings:
         elevenlabs_voice_id=elevenlabs_voice_id,
         elevenlabs_model_id=elevenlabs_model_id,
         max_footage_bytes=max_footage_bytes,
+        access_token=access_token,
     )
 
 

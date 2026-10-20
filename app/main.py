@@ -5,6 +5,9 @@ import logging
 import mimetypes
 import os
 import re
+import base64
+import binascii
+import secrets
 import shutil
 import subprocess
 import threading
@@ -183,6 +186,25 @@ def _error_body(code: str, message: str, retryable: bool = False, details: Any =
     return {"detail": {"error": {"code": code, "message": message, "retryable": retryable, "details": details}}}
 
 
+def _access_token_is_valid(request: Request) -> bool:
+    """Accept an optional deployment token without exposing it to the UI."""
+    expected = settings.access_token
+    if not expected:
+        return True
+    authorization = request.headers.get("authorization", "")
+    scheme, _, value = authorization.partition(" ")
+    if scheme.lower() == "bearer":
+        return secrets.compare_digest(value, expected)
+    if scheme.lower() != "basic":
+        return False
+    try:
+        decoded = base64.b64decode(value, validate=True).decode("utf-8")
+    except (ValueError, UnicodeDecodeError, binascii.Error):
+        return False
+    _username, separator, password = decoded.partition(":")
+    return bool(separator) and secrets.compare_digest(password, expected)
+
+
 @app.middleware("http")
 async def correlation_middleware(request: Request, call_next):
     supplied_id = request.headers.get("X-Correlation-ID", "")
@@ -192,7 +214,16 @@ async def correlation_middleware(request: Request, call_next):
     job_token = job_context.set(match.group(1) if match else "-")
     try:
         try:
-            response = await call_next(request)
+            # Railway health checks remain available, while every interactive
+            # route is protected when SCENECRAFT_ACCESS_TOKEN is configured.
+            if settings.access_token and request.url.path not in {"/health", "/ready"} and not _access_token_is_valid(request):
+                response = JSONResponse(
+                    status_code=401,
+                    content=_error_body("AUTH_REQUIRED", "This deployment requires its access token."),
+                    headers={"WWW-Authenticate": 'Basic realm="SceneCraft Studio"'},
+                )
+            else:
+                response = await call_next(request)
         except Exception as exc:
             response = await unexpected_error_handler(request, exc)
         response.headers["X-Correlation-ID"] = correlation_id
@@ -875,6 +906,7 @@ def _render(job_id: str, script: str, ratio: str, audio_path: Path | None, corre
     job_token = job_context.set(job_id)
     started_at = time.monotonic()
     succeeded = False
+    failure_error: dict[str, Any] | None = None
     uploaded_audio = audio_path is not None
     public_scenes: list[dict[str, Any]] = []
     visual_catalog: dict[str, list[SceneVisual]] = {}
@@ -1158,19 +1190,11 @@ def _render(job_id: str, script: str, ratio: str, audio_path: Path | None, corre
         with jobs_lock:
             if job_id in jobs:
                 if isinstance(exc, ProviderError):
-                    error = {"code": exc.code, "message": str(exc), "retryable": exc.retryable, "details": exc.details}
+                    failure_error = {"code": exc.code, "message": str(exc), "retryable": exc.retryable, "details": exc.details}
                 else:
                     error_code = "INVALID_AUDIO" if isinstance(exc, ValueError) and uploaded_audio else "PROCESSING_FAILED"
                     message = str(exc) if isinstance(exc, Exception) else "The background render was interrupted."
-                    error = {"code": error_code, "message": message or "The background render failed.", "retryable": False, "details": None}
-                jobs[job_id].update(status="failed", progress=100, error=error, result=None)
-                if parent_job_id and parent_job_id in jobs and "draft_preview" in jobs[parent_job_id]:
-                    jobs[parent_job_id]["draft_preview"].update({
-                        "status": "failed",
-                        "progress": 100,
-                        "error": error,
-                        "result": None,
-                    })
+                    failure_error = {"code": error_code, "message": message or "The background render failed.", "retryable": False, "details": None}
                 if public_scenes and not draft_preview:
                     jobs[job_id].update(scenes=public_scenes, _visual_catalog=visual_catalog, _ratio=ratio, dirty=True)
         logger.error("job failed error_type=%s", type(exc).__name__)
@@ -1198,6 +1222,19 @@ def _render(job_id: str, script: str, ratio: str, audio_path: Path | None, corre
                         path.rmdir()
                     except OSError:
                         pass
+        if not succeeded and failure_error is not None:
+            # Do not expose a terminal status until cleanup has completed.
+            # Callers use it as the signal that the job directory is stable.
+            with jobs_lock:
+                if job_id in jobs:
+                    jobs[job_id].update(status="failed", progress=100, error=failure_error, result=None)
+                    if parent_job_id and parent_job_id in jobs and "draft_preview" in jobs[parent_job_id]:
+                        jobs[parent_job_id]["draft_preview"].update({
+                            "status": "failed",
+                            "progress": 100,
+                            "error": failure_error,
+                            "result": None,
+                        })
         job_context.reset(job_token)
         correlation_context.reset(correlation_token)
 

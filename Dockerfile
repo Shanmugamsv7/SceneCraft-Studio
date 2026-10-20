@@ -13,6 +13,10 @@ WORKDIR /app
 COPY requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 COPY app ./app
+RUN mkdir -p /app/data/jobs /app/data/footage-library \
+    && useradd --system --uid 10001 --home-dir /app scenecraft \
+    && chown -R scenecraft:scenecraft /app
+USER scenecraft
 
 EXPOSE 8000
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]

@@ -43,6 +43,39 @@ Compose starts one app service and mounts `./data` for job files. It does not st
 
 `.env.example` documents settings. Local startup loads `.env` from the project root; operating-system environment variables take precedence. Copy `.env.example` to `.env`, add your server-side provider settings there, and restart Uvicorn after changes. Docker Compose also reads `.env` for interpolation. The default footage provider is Wikimedia Commons; set `WIKIMEDIA_CONTACT` to a public URL or email for its API User-Agent. Selecting Commons without that contact does not substitute still images or mock footage: provider status and generation return `BROLL_NOT_CONFIGURED`. `TTS_PROVIDER` defaults to `mock`; selecting ElevenLabs without both credentials returns an actionable `TTS_NOT_CONFIGURED` error.
 
+## Railway Docker deployment
+
+Railway builds the included `Dockerfile`; it installs FFmpeg and ffprobe, serves FastAPI on `0.0.0.0`, and reads Railway's injected `PORT` (falling back to `8000` locally). Do not set a Railway start command: use the Dockerfile command.
+
+Before adding real-provider credentials, create a Railway Volume and mount it at `/app/data`. It must retain `/app/data/jobs` (uploaded audio, downloaded clips, generated narration, MP4s, SRTs, timelines, and manifests) and `/app/data/footage-library` (locally imported clips and sidecars). Railway's ephemeral filesystem is not sufficient for exports. The image normally runs as an unprivileged user; Railway mounts volumes as root, so set `RAILWAY_RUN_UID=0` for this service to allow the mounted volume to be written.
+
+Set these Railway service variables in the dashboard, never in source control or a committed `.env` file:
+
+```text
+BROLL_DATA_DIR=/app/data/jobs
+BROLL_LOCAL_LIBRARY=/app/data/footage-library
+BROLL_PROVIDER=wikimedia
+WIKIMEDIA_CONTACT=<public contact URL or email for the Commons User-Agent>
+TTS_PROVIDER=elevenlabs
+ELEVENLABS_API_KEY=<Railway secret>
+ELEVENLABS_VOICE_ID=<voice ID permitted for the account>
+ELEVENLABS_MODEL_ID=eleven_multilingual_v2
+SCENECRAFT_ACCESS_TOKEN=<long random secret>
+RAILWAY_RUN_UID=0
+JOB_WORKERS=2
+PROVIDER_TIMEOUT_SECONDS=10
+MAX_UPLOAD_BYTES=26214400
+MAX_FOOTAGE_BYTES=26214400
+```
+
+`WIKIMEDIA_CONTACT` is not an API key, but it is required for Commons mode. Commons does not need `PEXELS_API_KEY`; leave that variable unset unless explicitly switching to Pexels. Keep the ElevenLabs key and the access token in Railway's secret-variable UI only. With `SCENECRAFT_ACCESS_TOKEN` set, all interactive pages, static assets, API routes, and artifact downloads require authentication; use the token as the **password** in the browser's Basic-auth prompt (any username), or send `Authorization: Bearer <token>` from an API client. `/health` and `/ready` remain unauthenticated only for platform checks.
+
+In Railway service settings, set the HTTP health-check path to `/ready`; leave the custom start command blank so the Dockerfile `CMD` receives Railway's `PORT`. Railway detects a root-level `Dockerfile` automatically. These deployment details and the `RAILWAY_RUN_UID=0` volume requirement follow Railway's current [Dockerfile guidance](https://docs.railway.com/builds/dockerfiles), [start-command guidance](https://docs.railway.com/deployments/start-command), and [volume guidance](https://docs.railway.com/volumes).
+
+Do not make this service publicly usable with real provider credentials and no access token: it has no user accounts, quotas, per-user artifact isolation, or billing controls. The built-in gate is the smallest shared-team safeguard; put a stronger identity-aware proxy in front of it for broader access.
+
+Important persistence limitation: the files survive on the mounted volume, but jobs, idempotency records, progress, and scene/editor state are currently in process memory. A deploy, restart, or scale-out loses that state, so existing artifact routes cannot rediscover old jobs even though their files remain on disk. Run one replica and treat restart recovery/durable job history as a future database/queue requirement rather than assuming the volume solves it.
+
 ### Optional real providers
 
 For Commons footage, set `BROLL_PROVIDER=wikimedia` and `WIKIMEDIA_CONTACT` to a public contact URL or email for the descriptive API User-Agent. Commons search is read-only and does not require an API key. Check each file page and its license terms before use; Commons file metadata is uploader-provided and is not independently guaranteed. Alternatively, set `BROLL_PROVIDER=local` and import clips you have rights to use through the editing dashboard. The existing Pexels adapter remains available to users with valid credentials. ElevenLabs requires an API key and voice ID; usage may be billable. No external request is made in default demo mode.
@@ -118,7 +151,7 @@ The OpenAPI 3.1 contract is in [openapi.yaml](openapi.yaml), served interactivel
 | `GET /api/v1/jobs/{job_id}/scenes/{scene_id}/visuals/{visual_id}/preview` | Streams a candidate source image or video for inspection without accepting it. |
 | `GET /api/v1/jobs/{job_id}/artifacts/{filename}` | Downloads an allowlisted artifact from that job. |
 
-Errors use `detail.error.code`, `message`, `retryable`, and `details`. Requests accept or receive `X-Correlation-ID`; JSON logs include it and a job ID when one is available. Idempotency, jobs, and editor state exist only in process memory and reset on restart. There is no login or authentication. Keep this development service on a trusted local machine.
+Errors use `detail.error.code`, `message`, `retryable`, and `details`. Requests accept or receive `X-Correlation-ID`; JSON logs include it and a job ID when one is available. Idempotency, jobs, and editor state exist only in process memory and reset on restart. Authentication is disabled by default for trusted local development; set `SCENECRAFT_ACCESS_TOKEN` for the deployment access gate described above.
 
 ## Tests and evaluation pack
 
@@ -156,4 +189,4 @@ Provider-adapter follow-up verification previously passed **61 tests** with the 
 
 No browser surfaces were available to the automation tool, so the page still needs human visual review. To review manually, start the local app, open `http://127.0.0.1:8000` in a desktop browser, create a short script job, check all three ratio controls, edit one scene's narration/caption, choose and accept a different visual, save, render, preview the video, and download all four artifacts. Repeat at a narrow/mobile viewport and verify keyboard focus, labels, loading/error states, and that edits survive a status refresh.
 
-Known limitations: live Commons/Pexels/ElevenLabs integrations have not been validated in this workspace; the default mode still uses generated graphics and test-tone audio; provider-ranked results are not independent semantic relevance scores; uploaded audio is not transcribed; local/Commons license claims are not independently verified; scene/job state and idempotency are in memory; uploaded audio and downloaded provider assets remain in local job folders without automatic expiration; the service has no authentication; the official assessment form/brief was not found in this workspace; and final browser review is pending. No real-provider cost was measured. See [SOURCES.md](SOURCES.md), [AI_USE.md](AI_USE.md), [REPORT.md](REPORT.md), and [test-pack/requirements-matrix.md](test-pack/requirements-matrix.md) for detailed provenance and evidence.
+Known limitations: live Commons/Pexels/ElevenLabs integrations have not been validated in this workspace; the default mode still uses generated graphics and test-tone audio; provider-ranked results are not independent semantic relevance scores; uploaded audio is not transcribed; local/Commons license claims are not independently verified; scene/job state and idempotency are in memory; uploaded audio and downloaded provider assets remain in local job folders without automatic expiration; the optional shared-token gate is not a replacement for user accounts or durable job recovery; the official assessment form/brief was not found in this workspace; and final browser review is pending. No real-provider cost was measured. See [SOURCES.md](SOURCES.md), [AI_USE.md](AI_USE.md), [REPORT.md](REPORT.md), and [test-pack/requirements-matrix.md](test-pack/requirements-matrix.md) for detailed provenance and evidence.
