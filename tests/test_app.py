@@ -585,6 +585,8 @@ def test_burn_captions_uses_libass_filter_and_keeps_audio(tmp_path, monkeypatch)
 
     def fake_run(command, **kwargs):
         commands.append((command, kwargs))
+        if "-filters" not in command:
+            Path(command[-1]).write_bytes(b"rendered")
         return subprocess.CompletedProcess(command, 0, stdout=" .. subtitles         V->V       Render text subtitles onto input video using the libass library.\n", stderr="")
 
     monkeypatch.setattr(main, "_run", fake_run)
@@ -598,6 +600,47 @@ def test_burn_captions_uses_libass_filter_and_keeps_audio(tmp_path, monkeypatch)
     assert "0:a:0" in command
     assert command[command.index("-c:a") + 1] == "copy"
     assert kwargs["cwd"] == tmp_path
+    assert kwargs["stage"] == "burn captions"
+
+
+def test_burn_captions_resolves_source_before_changing_working_directory(tmp_path, monkeypatch) -> None:
+    render_dir = tmp_path / "job" / ".rendering"
+    render_dir.mkdir(parents=True)
+    source = render_dir / "muxed.mp4"
+    captions = render_dir / "captions.srt"
+    output = render_dir / "video.mp4"
+    source.write_bytes(b"source")
+    captions.write_text("1\n00:00:00,000 --> 00:00:01,000\nCaption\n", encoding="utf-8")
+    commands = []
+
+    def fake_run(command, **kwargs):
+        commands.append((command, kwargs))
+        if "-filters" not in command:
+            Path(command[-1]).write_bytes(b"rendered")
+        return subprocess.CompletedProcess(command, 0, stdout=" .. subtitles         V->V\n", stderr="")
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(main, "_run", fake_run)
+    main._burn_captions_into_video("ffmpeg", Path("job/.rendering/muxed.mp4"), Path("job/.rendering/captions.srt"), Path("job/.rendering/video.mp4"), 720)
+
+    command, kwargs = commands[-1]
+    assert command[command.index("-i") + 1] == str(source.resolve())
+    assert command[-1] == str(output.resolve())
+    assert kwargs["cwd"] == render_dir.resolve()
+
+
+def test_missing_ffmpeg_intermediate_is_reported_explicitly(tmp_path) -> None:
+    with pytest.raises(RuntimeError, match="mux audio and video.*non-empty file"):
+        main._require_nonempty_file(tmp_path / "muxed.mp4", "mux audio and video")
+
+
+def test_ffmpeg_failure_includes_stage_and_stderr(monkeypatch) -> None:
+    def fail_run(*args, **kwargs):
+        raise subprocess.CalledProcessError(1, args[0], stderr="Error opening input file muxed.mp4.")
+
+    monkeypatch.setattr(main.subprocess, "run", fail_run)
+    with pytest.raises(RuntimeError, match=r"during mux audio and video.*Error opening input file muxed\.mp4"):
+        main._run(["ffmpeg", "-i", "muxed.mp4"], stage="mux audio and video")
 
 
 def test_burn_captions_explains_missing_subtitles_filter(tmp_path, monkeypatch) -> None:

@@ -276,16 +276,28 @@ async def unexpected_error_handler(request: Request, exc: Exception) -> JSONResp
     return JSONResponse(status_code=500, content=_error_body("INTERNAL_ERROR", "An unexpected server error occurred.", retryable=True))
 
 
-def _run(command: list[str], *, timeout: int = 120, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
+def _run(command: list[str], *, timeout: int = 120, cwd: Path | None = None, stage: str | None = None) -> subprocess.CompletedProcess[str]:
     try:
         return subprocess.run(command, capture_output=True, text=True, timeout=timeout, check=True, cwd=cwd)
     except subprocess.CalledProcessError as exc:
-        raise RuntimeError((exc.stderr or "FFmpeg command failed")[-2000:]) from exc
+        label = f" during {stage}" if stage else ""
+        detail = (exc.stderr or "FFmpeg command failed").strip()
+        raise RuntimeError(f"FFmpeg command failed{label}: {detail[-2000:]}") from exc
     except subprocess.TimeoutExpired as exc:
         raise RuntimeError(f"Media command timed out after {timeout} seconds.") from exc
     except FileNotFoundError as exc:
         executable = Path(command[0]).name if command else "media tool"
         raise RuntimeError(f"Required media executable is unavailable: {executable}.") from exc
+
+
+def _require_nonempty_file(path: Path, stage: str) -> Path:
+    path = path.resolve()
+    try:
+        if not path.is_file() or path.stat().st_size == 0:
+            raise RuntimeError(f"FFmpeg stage '{stage}' completed without creating a non-empty file: {path.name}")
+    except OSError as exc:
+        raise RuntimeError(f"FFmpeg stage '{stage}' output could not be inspected: {path.name}") from exc
+    return path
 
 
 def _split_scenes(script: str) -> list[str]:
@@ -401,6 +413,9 @@ def _ffmpeg_supports_subtitles(ffmpeg: str) -> bool:
 
 def _burn_captions_into_video(ffmpeg: str, source: Path, captions: Path, output: Path, height: int) -> None:
     """Render an SRT once into final video frames, retaining the existing audio."""
+    source = source.resolve()
+    captions = captions.resolve()
+    output = output.resolve()
     if not _ffmpeg_supports_subtitles(ffmpeg):
         raise RuntimeError(
             "This FFmpeg build cannot burn captions because its subtitles/libass filter is unavailable. "
@@ -408,6 +423,7 @@ def _burn_captions_into_video(ffmpeg: str, source: Path, captions: Path, output:
         )
     if not captions.is_file() or captions.stat().st_size == 0:
         raise RuntimeError("Final captions are missing; the caption-burned MP4 cannot be created.")
+    _require_nonempty_file(source, "caption input")
     font_size = max(22, round(height * 0.045))
     margin_v = max(28, round(height * 0.05))
     style = (
@@ -423,7 +439,9 @@ def _burn_captions_into_video(ffmpeg: str, source: Path, captions: Path, output:
             "-preset", "medium", "-pix_fmt", "yuv420p", "-c:a", "copy", "-movflags", "+faststart", str(output),
         ],
         cwd=captions.parent,
+        stage="burn captions",
     )
+    _require_nonempty_file(output, "burn captions")
 
 
 def _merged_scene_captions_srt(scenes: list[dict[str, Any]]) -> str:
@@ -1010,8 +1028,8 @@ def _verify_required_artifacts(job_id: str, job_dir: Path, ratio: str, expected_
 
 
 def _render(job_id: str, script: str, ratio: str, audio_path: Path | None, correlation_id: str, edited_scenes: list[dict[str, Any]] | None = None, draft_preview: bool = False, parent_job_id: str | None = None) -> None:
-    job_dir = DATA_DIR / job_id
-    render_dir = job_dir / ".rendering"
+    job_dir = (DATA_DIR / job_id).resolve()
+    render_dir = (job_dir / ".rendering").resolve()
     render_dir.mkdir(parents=True, exist_ok=True)
     correlation_token = correlation_context.set(correlation_id)
     job_token = job_context.set(job_id)
@@ -1037,6 +1055,9 @@ def _render(job_id: str, script: str, ratio: str, audio_path: Path | None, corre
             raise RuntimeError("FFmpeg is unavailable. Install FFmpeg and add it to PATH, then retry the job.")
         if not _ffprobe_path():
             raise RuntimeError("ffprobe is unavailable. Install FFmpeg (including ffprobe) and add it to PATH.")
+
+        if audio_path is not None:
+            audio_path = audio_path.resolve()
 
         scenes = ([scene["narration_text"] for scene in edited_scenes] if edited_scenes is not None else (_split_scenes(script) if script else ["Transcript unavailable: uploaded voice-over"]))
         tts_scene_durations: list[float] | None = None
@@ -1178,12 +1199,13 @@ def _render(job_id: str, script: str, ratio: str, audio_path: Path | None, corre
             if visual.asset_path is not None:
                 if visual.media_type == "image":
                     zoom = f"scale={width}:{height}:force_original_aspect_ratio=increase,crop={width}:{height},zoompan=z='min(zoom+0.0004,1.04)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s={width}x{height}:fps={FRAME_RATE},trim=end_frame={scene_frames},setpts=PTS-STARTPTS"
-                    _run([ffmpeg, "-y", "-hide_banner", "-loglevel", "error", "-loop", "1", "-framerate", str(FRAME_RATE), "-i", str(visual.asset_path), "-vf", zoom, "-an", "-frames:v", str(scene_frames), "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-r", str(FRAME_RATE), str(scene_path)])
+                    _run([ffmpeg, "-y", "-hide_banner", "-loglevel", "error", "-loop", "1", "-framerate", str(FRAME_RATE), "-i", str(visual.asset_path.resolve()), "-vf", zoom, "-an", "-frames:v", str(scene_frames), "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-r", str(FRAME_RATE), str(scene_path)], stage=f"render scene {index + 1}")
                 else:
-                    _run([ffmpeg, "-y", "-hide_banner", "-loglevel", "error", "-stream_loop", "-1", "-i", str(visual.asset_path), "-vf", f"scale={width}:{height}:force_original_aspect_ratio=increase,crop={width}:{height},fps={FRAME_RATE},trim=end_frame={scene_frames},setpts=PTS-STARTPTS", "-an", "-frames:v", str(scene_frames), "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-r", str(FRAME_RATE), str(scene_path)])
+                    _run([ffmpeg, "-y", "-hide_banner", "-loglevel", "error", "-stream_loop", "-1", "-i", str(visual.asset_path.resolve()), "-vf", f"scale={width}:{height}:force_original_aspect_ratio=increase,crop={width}:{height},fps={FRAME_RATE},trim=end_frame={scene_frames},setpts=PTS-STARTPTS", "-an", "-frames:v", str(scene_frames), "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-r", str(FRAME_RATE), str(scene_path)], stage=f"render scene {index + 1}")
             else:
                 motion = f"drawbox=x='mod(t*70+{index * 97},iw-160)':y='(ih-160)/2':w=160:h=160:color=white@0.08:t=fill"
-                _run([ffmpeg, "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", f"color=c={visual.color}:s={width}x{height}:r={FRAME_RATE}", "-vf", motion, "-an", "-frames:v", str(scene_frames), "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-r", str(FRAME_RATE), str(scene_path)])
+                _run([ffmpeg, "-y", "-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", f"color=c={visual.color}:s={width}x{height}:r={FRAME_RATE}", "-vf", motion, "-an", "-frames:v", str(scene_frames), "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-r", str(FRAME_RATE), str(scene_path)], stage=f"render scene {index + 1}")
+            _require_nonempty_file(scene_path, f"render scene {index + 1}")
             scene_paths.append(scene_path)
             warnings = list(visual.warnings)
             if voice_source == "user_upload":
@@ -1215,10 +1237,12 @@ def _render(job_id: str, script: str, ratio: str, audio_path: Path | None, corre
 
         concat_file.write_text("".join(f"file '{path.name}'\n" for path in scene_paths), encoding="utf-8")
         joined = render_dir / "joined.mp4"
-        _run([ffmpeg, "-y", "-hide_banner", "-loglevel", "error", "-f", "concat", "-safe", "0", "-i", str(concat_file), "-c", "copy", str(joined)])
+        _run([ffmpeg, "-y", "-hide_banner", "-loglevel", "error", "-f", "concat", "-safe", "0", "-i", str(concat_file), "-c", "copy", str(joined)], cwd=render_dir, stage="join scenes")
+        _require_nonempty_file(joined, "join scenes")
         output = render_dir / f"video_{ratio.replace(':', 'x')}.mp4"
         muxed_output = render_dir / "muxed.mp4"
-        _run([ffmpeg, "-y", "-hide_banner", "-loglevel", "error", "-i", str(joined), "-i", str(audio_path), "-map", "0:v:0", "-map", "1:a:0", "-af", "apad", "-t", f"{render_duration:.9f}", "-c:v", "copy", "-c:a", "aac", "-movflags", "+faststart", str(muxed_output)])
+        _run([ffmpeg, "-y", "-hide_banner", "-loglevel", "error", "-i", str(joined), "-i", str(audio_path), "-map", "0:v:0", "-map", "1:a:0", "-af", "apad", "-t", f"{render_duration:.9f}", "-c:v", "copy", "-c:a", "aac", "-movflags", "+faststart", str(muxed_output)], cwd=render_dir, stage="mux audio and video")
+        _require_nonempty_file(muxed_output, "mux audio and video")
         mux_probe = _probe_render(muxed_output)
         actual_duration = mux_probe["duration"]
         try:
