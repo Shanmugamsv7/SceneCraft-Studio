@@ -2598,9 +2598,9 @@ def test_storyboard_add_split_remove_retimes_scenes_and_invalid_requests_do_not_
     updated = client.get(f"/api/v1/jobs/{job_id}").json()["scenes"]
     assert all(round(left["end"], 6) == round(right["start"], 6) for left, right in zip(updated, updated[1:]))
     assert abs(sum(piece["duration"] for piece in pieces) - original["duration"]) < 0.000001
-    deleted = client.delete(f"/api/v1/jobs/{job_id}/scenes/{new_scene['scene_id']}", json={"confirm": True})
+    deleted = client.request("DELETE", f"/api/v1/jobs/{job_id}/scenes/{new_scene['scene_id']}", json={"confirm": True})
     assert deleted.status_code == 200
-    assert client.delete(f"/api/v1/jobs/{job_id}/scenes/{pieces[0]['scene_id']}", json={"confirm": False}).status_code == 422
+    assert client.request("DELETE", f"/api/v1/jobs/{job_id}/scenes/{pieces[0]['scene_id']}", json={"confirm": False}).status_code == 422
     assert client.get(f"/api/v1/jobs/{job_id}/voice").json()["status"] == "stale"
 
 
