@@ -651,6 +651,35 @@ def test_burn_captions_explains_missing_subtitles_filter(tmp_path, monkeypatch) 
         main._burn_captions_into_video("ffmpeg", tmp_path / "muxed.mp4", captions, tmp_path / "video.mp4", 720)
 
 
+def test_real_caption_burn_smoke_produces_valid_audio_video_mp4(tmp_path) -> None:
+    ffmpeg = main._ffmpeg_path()
+    ffprobe = main._ffprobe_path()
+    if not ffmpeg or not ffprobe:
+        pytest.skip("FFmpeg and ffprobe are required for the caption-burn smoke test")
+    source = tmp_path / "source.mp4"
+    captions = tmp_path / "captions.srt"
+    output = tmp_path / "captioned.mp4"
+    captions.write_text("1\n00:00:00,000 --> 00:00:00,800\nSceneCraft caption smoke test.\n", encoding="utf-8")
+    main._run([
+        ffmpeg, "-y", "-hide_banner", "-loglevel", "error",
+        "-f", "lavfi", "-i", "color=c=black:s=320x180:r=30",
+        "-f", "lavfi", "-i", "sine=frequency=440:duration=1", "-t", "1",
+        "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", str(source),
+    ], stage="caption smoke source")
+    main._burn_captions_into_video(ffmpeg, source, captions, output, 180)
+    probe = json.loads(main._run([
+        ffprobe, "-v", "error", "-show_entries", "format=duration:stream=codec_name,codec_type,width,height",
+        "-of", "json", str(output),
+    ], stage="caption smoke probe").stdout)
+    assert output.is_file() and output.stat().st_size > 0
+    streams = {stream["codec_type"]: stream for stream in probe["streams"]}
+    assert streams["video"]["codec_name"] == "h264"
+    assert streams["audio"]["codec_name"] == "aac"
+    assert streams["video"]["width"] == 320
+    assert streams["video"]["height"] == 180
+    assert 0.9 <= float(probe["format"]["duration"]) <= 1.1
+
+
 def test_merged_scene_captions_srt_uses_absolute_times_and_current_text() -> None:
     from app.main import _merged_scene_captions_srt
 
@@ -1253,6 +1282,7 @@ def test_readiness_reports_dependencies(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(main, "DATA_DIR", tmp_path / "jobs")
     monkeypatch.setattr(main, "_ffmpeg_path", lambda: "ffmpeg")
     monkeypatch.setattr(main, "_ffprobe_path", lambda: "ffprobe")
+    monkeypatch.setattr(main, "_ffmpeg_subtitles_ready", lambda _ffmpeg: True)
     response = client.get("/ready")
     assert response.status_code == 200
     assert response.json()["status"] == "ready"

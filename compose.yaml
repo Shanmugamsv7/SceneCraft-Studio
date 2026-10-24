@@ -6,6 +6,8 @@ services:
     environment:
       BROLL_DATA_DIR: /app/data/jobs
       BROLL_LOCAL_LIBRARY: /app/data/footage-library
+      FFMPEG_BIN: /usr/bin/ffmpeg
+      FFPROBE_BIN: /usr/bin/ffprobe
       BROLL_PROVIDER: ${BROLL_PROVIDER:-mock}
       WIKIMEDIA_CONTACT: ${WIKIMEDIA_CONTACT:-}
       PEXELS_API_KEY: ${PEXELS_API_KEY:-}

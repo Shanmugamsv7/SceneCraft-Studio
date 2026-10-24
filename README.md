@@ -45,7 +45,7 @@ Compose starts one app service and mounts `./data` for job files. It does not st
 
 ## Railway Docker deployment
 
-Railway builds the included `Dockerfile`; it installs FFmpeg and ffprobe, serves FastAPI on `0.0.0.0`, and reads Railway's injected `PORT` (falling back to `8000` locally). Do not set a Railway start command: use the Dockerfile command.
+Railway builds the included `Dockerfile`; it installs FFmpeg, ffprobe, libass, and common fonts, verifies the `subtitles` filter and a captioned MP4 during the image build, serves FastAPI on `0.0.0.0`, and reads Railway's injected `PORT` (falling back to `8000` locally). Do not set a Railway start command: use the Dockerfile command. `/ready` reports `ffmpeg_subtitles` separately and stays unavailable if caption rendering is not supported.
 
 Before adding real-provider credentials, create a Railway Volume and mount it at `/app/data`. It must retain `/app/data/jobs` (uploaded audio, downloaded clips, generated narration, MP4s, SRTs, timelines, and manifests) and `/app/data/footage-library` (locally imported clips and sidecars). Railway's ephemeral filesystem is not sufficient for exports. The image normally runs as an unprivileged user; Railway mounts volumes as root, so set `RAILWAY_RUN_UID=0` for this service to allow the mounted volume to be written.
 

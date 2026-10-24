@@ -411,6 +411,16 @@ def _ffmpeg_supports_subtitles(ffmpeg: str) -> bool:
     return bool(re.search(r"^\s*\.\.\s+subtitles\s+V->V", filters.stdout, re.MULTILINE))
 
 
+def _ffmpeg_subtitles_ready(ffmpeg: str | None) -> bool:
+    """Check the required caption capability without making readiness fail noisily."""
+    if not ffmpeg:
+        return False
+    try:
+        return _ffmpeg_supports_subtitles(ffmpeg)
+    except (RuntimeError, OSError):
+        return False
+
+
 def _burn_captions_into_video(ffmpeg: str, source: Path, captions: Path, output: Path, height: int) -> None:
     """Render an SRT once into final video frames, retaining the existing audio."""
     source = source.resolve()
@@ -1381,11 +1391,13 @@ def health() -> dict[str, str]:
 
 @app.get("/ready")
 def ready() -> JSONResponse:
-    ffmpeg_ready = _ffmpeg_path() is not None
+    ffmpeg_path = _ffmpeg_path()
+    ffmpeg_ready = ffmpeg_path is not None
     ffprobe_ready = _ffprobe_path() is not None
+    subtitles_ready = _ffmpeg_subtitles_ready(ffmpeg_path)
     writable_dir = DATA_DIR if DATA_DIR.exists() else next((parent for parent in DATA_DIR.parents if parent.exists()), Path.cwd())
     storage_ready = writable_dir.is_dir() and os.access(writable_dir, os.W_OK)
-    checks = {"ffmpeg": ffmpeg_ready, "ffprobe": ffprobe_ready, "job_storage": storage_ready, "provider_configuration": True}
+    checks = {"ffmpeg": ffmpeg_ready, "ffprobe": ffprobe_ready, "ffmpeg_subtitles": subtitles_ready, "job_storage": storage_ready, "provider_configuration": True}
     if all(checks.values()):
         return JSONResponse(status_code=200, content={"status": "ready", "checks": checks})
     return JSONResponse(status_code=503, content=_error_body("NOT_READY", "One or more required services are unavailable.", retryable=True, details=checks))
